@@ -10,7 +10,7 @@
 // between them. So at every moment in between, every point of the box is within d of a checked position, and the
 // whole movement keeps at least `margin` from walls, door frame and ceiling.
 
-import { HOLDS, rotation, orient, clear, extent } from './geom.js';
+import { HOLDS, rotation, rotationInto, orient, clear, extent } from './geom.js';
 
 export const DEFAULTS = { step: 2.5, yawSteps: 144, pitchSteps: 36, margin: 1, slack: 0.5, maxStates: 30e6 };
 
@@ -75,15 +75,46 @@ export function solve(dims, scene, opts = {}) {
   const words = (NPOS + 31) >>> 5;
   const isSeen = (id, pos) => { const s = seen[id]; return s !== undefined && (s[pos >>> 5] & (1 << (pos & 31))) !== 0; };
   const mark = (id, pos) => { (seen[id] ?? (seen[id] = new Int32Array(words)))[pos >>> 5] |= 1 << (pos & 31); };
+  // Poses already found blocked (a blocked pose is proposed by many neighbours; test it once).
+  const blocked = new Array(NO);
+  const isBlocked = (id, pos) => { const s = blocked[id]; return s !== undefined && (s[pos >>> 5] & (1 << (pos & 31))) !== 0; };
+  const markBlocked = (id, pos) => { (blocked[id] ?? (blocked[id] = new Int32Array(words)))[pos >>> 5] |= 1 << (pos & 31); };
 
   // Queue of states (orientation, position) with parents, for the way back.
   let cap = 1 << 16, qo = new Int32Array(cap), qp = new Int32Array(cap), par = new Int32Array(cap), n = 0;
   function push(id, pos, parent) {
     if (n === cap) { cap *= 2; for (const nm of ['qo', 'qp', 'par']) { const g = new Int32Array(cap); g.set(nm === 'qo' ? qo : nm === 'qp' ? qp : par); if (nm === 'qo') qo = g; else if (nm === 'qp') qp = g; else par = g; } }
-    qo[n] = id; qp[n] = pos; par[n] = parent; mark(id, pos); n++;
+    qo[n] = id; qp[n] = pos; par[n] = parent; mark(id, pos); hpush(n, togo(id, pos)); n++;
   }
   const X = (id, pos) => px[pos] + ori(id).offx, Y = (id, pos) => py[pos] + ori(id).offy;
+  // Best-first: always expand the pose nearest the goal (by the scene's measure of how far the box still has to
+  // go), so a way is usually found long before everything is explored. When there is no way, everything reachable
+  // gets explored either way.
+  let heap = new Int32Array(1 << 16), hkey = new Float64Array(1 << 16), hn = 0;
+  function hpush(i, k) {
+    if (hn === heap.length) { const a = new Int32Array(hn * 2); a.set(heap); heap = a; const b = new Float64Array(hn * 2); b.set(hkey); hkey = b; }
+    let c = hn++;
+    while (c > 0) { const pa = (c - 1) >> 1; if (hkey[pa] <= k) break; heap[c] = heap[pa]; hkey[c] = hkey[pa]; c = pa; }
+    heap[c] = i; hkey[c] = k;
+  }
+  function hpop() {
+    const top = heap[0], last = heap[--hn], lk = hkey[hn];
+    let c = 0;
+    for (;;) {
+      let ch = 2 * c + 1;
+      if (ch >= hn) break;
+      if (ch + 1 < hn && hkey[ch + 1] < hkey[ch]) ch++;
+      if (hkey[ch] >= lk) break;
+      heap[c] = heap[ch]; hkey[c] = hkey[ch]; c = ch;
+    }
+    heap[c] = last; hkey[c] = lk;
+    return top;
+  }
+  const togo = (id, pos) => scene.togo(extent(ori(id), X(id, pos), Y(id, pos)));
+
   const free = (id, pos) => clear(scene, ori(id), X(id, pos), Y(id, pos), m);
+
+  const scratchR = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], scratchO = orient(dims, rotation(HOLDS[0], 0, 0));
 
   // A move from state A to state B (neighbours): check points along it.
   function moveClear(ida, posa, idb, posb) {
@@ -103,41 +134,39 @@ export function solve(dims, scene, opts = {}) {
     const k = Math.ceil(travel / (2 * slack));
     for (let i = 1; i < k; i++) {
       const t = i / k;
-      const oo = orient(dims, rotation(HOLDS[A.h], A.yaw + t * dy, A.pitch + t * dp));
+      const oo = orient(dims, rotationInto(scratchR, HOLDS[A.h], A.yaw + t * dy, A.pitch + t * dp), scratchO);
       if (!clear(scene, oo, xa + t * dx, ya + t * dyy, m)) return false;
     }
     return true;
   }
 
   // Which orientations can the box be turned into in open space under this ceiling, starting upright (height
-  // axis vertical)? Only those are allowed when it enters. Yaw turns and hold changes are free there; tilting is
-  // checked against the ceiling along the way.
-  const ceilingOK = (h, yaw, p0, p1) => {
-    const travelMax = Math.abs(p1 - p0) * 2.8 * reach, k = Math.max(1, Math.ceil(travelMax / (2 * slack)));
-    for (let i = 0; i <= k; i++) if (orient(dims, rotation(HOLDS[h], yaw, p0 + (i / k) * (p1 - p0))).top > scene.ceiling - m) return false;
-    return true;
+  // axis vertical)? Only those are allowed when it enters. Turning about the vertical and changing hold are free
+  // there. Tilting a hold's axis up to pitch p makes the box dims[a] sin p + dims[v] cos p tall (whatever the yaw),
+  // which peaks at the diagonal sqrt(dims[a]^2 + dims[v]^2) when tan p = dims[a] / dims[v]: so a tilt from p0 to
+  // p1 fits exactly when that height stays under the ceiling over the whole range.
+  const limit = scene.ceiling - m;
+  const tallest = (hd, p0, p1) => {
+    const A = dims[hd.a], V = dims[hd.v], peak = Math.atan2(A, V);
+    const lo = Math.min(p0, p1), hi = Math.max(p0, p1);
+    return peak > lo && peak < hi ? Math.hypot(A, V) : Math.max(A * Math.sin(lo) + V * Math.cos(lo), A * Math.sin(hi) + V * Math.cos(hi));
   };
-  const enter = new Uint8Array(NO), stack = [];
-  for (let h = 0; h < NH; h++) if (HOLDS[h].v === 2) for (let y = 0; y < NY; y++) {
-    const id = oid(h, y, 0);
-    if (ori(id).top <= scene.ceiling - m) { enter[id] = 1; stack.push(id); }
+  const enterHP = new Uint8Array(NH * NP), todo = []; // by hold and pitch (yaw doesn't matter)
+  for (let h = 0; h < NH; h++) if (HOLDS[h].v === 2 && dims[2] <= limit) { enterHP[h * NP] = 1; todo.push(h * NP); }
+  while (todo.length) {
+    const k = todo.pop(), h = Math.floor(k / NP), p = k % NP;
+    const next = [];
+    for (const q of [p - 1, p + 1]) if (q >= 0 && q < NP && tallest(HOLDS[h], p * dPitch, q * dPitch) <= limit) next.push(h * NP + q);
+    if (p === 0 || p === NP - 1) for (const j of same.get(oid(h, 0, p)) ?? []) next.push(Math.floor(j / (NP * NY)) * NP + p);
+    for (const j of next) if (!enterHP[j]) { enterHP[j] = 1; todo.push(j); }
   }
-  while (stack.length) {
-    const id = stack.pop(), p = id % NP, y = ((id - p) / NP) % NY, h = Math.floor(id / (NP * NY));
-    const next = [oid(h, (y + 1) % NY, p), oid(h, (y + NY - 1) % NY, p), ...(same.get(id) ?? [])];
-    for (const j of next) if (!enter[j]) { enter[j] = 1; stack.push(j); }
-    for (const q of [p - 1, p + 1]) {
-      if (q < 0 || q >= NP) continue;
-      const j = oid(h, y, q);
-      if (!enter[j] && ceilingOK(h, y * dYaw, p * dPitch, q * dPitch)) { enter[j] = 1; stack.push(j); }
-    }
-  }
+  const enter = (id) => enterHP[Math.floor(id / (NP * NY)) * NP + (id % NP)] === 1;
 
   // Seeds: every clear pose on one row deep in the place the box comes from, in an orientation it can enter in.
   const jSeed = Math.round((scene.seedY - y0) / step);
   for (let id = 0; id < NO; id++) {
     const oo = ori(id);
-    if (!enter[id]) continue;
+    if (!enter(id)) continue;
     for (let i = 0; i < GW; i++) {
       const pos = posAt[i + jSeed * GW];
       if (pos < 0 || isSeen(id, pos)) continue;
@@ -146,9 +175,9 @@ export function solve(dims, scene, opts = {}) {
   }
   const seeds = n;
 
-  let found = -1, head = 0;
-  while (head < n && found < 0 && n < o.maxStates) {
-    const id = qo[head], pos = qp[head], me = head++;
+  let found = -1;
+  while (hn > 0 && found < 0 && n < o.maxStates) {
+    const me = hpop(), id = qo[me], pos = qp[me];
     const p = id % NP, y = ((id - p) / NP) % NY, h = Math.floor(id / (NP * NY));
     // Neighbours: shift by up to one step in x and y, turn by up to one step and tilt by up to one step, together
     // (the tightest ways round need sliding while turning), plus changes of hold.
@@ -174,9 +203,10 @@ export function solve(dims, scene, opts = {}) {
     for (const j of same.get(id) ?? []) cand.push(j, pos);
     for (let c = 0; c < cand.length; c += 2) {
       const nid = cand[c], npos = cand[c + 1];
-      if (isSeen(nid, npos)) continue;
+      if (isSeen(nid, npos) || isBlocked(nid, npos)) continue;
       const no = ori(nid);
-      if (no.top > scene.ceiling - m || !free(nid, npos) || !moveClear(id, pos, nid, npos)) continue;
+      if (no.top > scene.ceiling - m || !free(nid, npos)) { markBlocked(nid, npos); continue; }
+      if (!moveClear(id, pos, nid, npos)) continue;
       push(nid, npos, me);
       if (scene.goal(extent(no, X(nid, npos), Y(nid, npos)))) { found = n - 1; break; }
     }

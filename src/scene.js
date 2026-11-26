@@ -23,6 +23,7 @@ export function corner({ a, b, ceiling, reach }) {
     inside: (x, y) => (x >= 0 && x <= a && y >= -Y && y <= b) || (y >= 0 && y <= b && x >= 0 && x <= X),
     start: (e) => e.maxy <= 0 && e.minx >= 0 && e.maxx <= a,
     goal: (e) => e.minx >= a && e.miny >= 0 && e.maxy <= b,
+    togo: (e) => Math.max(0, a - e.minx) + Math.max(0, -e.miny),
   };
 }
 
@@ -52,5 +53,6 @@ export function sideDoor({ a, b, doorH, t, past, ceiling, reach }) {
       || (x >= x2 && x <= x2 + R && y >= -R && y <= R),
     start: (e) => e.maxx <= a && e.miny >= -Y && e.maxy <= b + past,
     goal: (e) => e.minx >= x2,
+    togo: (e) => Math.max(0, x2 - e.minx),
   };
 }

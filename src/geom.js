@@ -11,48 +11,44 @@ export const HOLDS = [];
 for (let a = 0; a < 3; a++) for (let v = 0; v < 3; v++) if (v !== a) HOLDS.push({ a, v, w: 3 - a - v });
 
 // Rotation matrix (row-major 3x3, columns = world directions of the box's length/depth/height axes).
-export function rotation(hold, yaw, pitch) {
-  // Base: tilt axis -> X, other horizontal axis -> Y, vertical axis -> Z.
-  const base = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-  base[0][hold.a] = 1; base[1][hold.w] = 1; base[2][hold.v] = 1;
-  // Ry(-pitch): X -> (cos p, 0, sin p), Z -> (-sin p, 0, cos p): raises the +X end.
-  const cp = Math.cos(pitch), sp = Math.sin(pitch);
-  const ry = [[cp, 0, -sp], [0, 1, 0], [sp, 0, cp]];
-  const cy = Math.cos(yaw), sy = Math.sin(yaw);
-  const rz = [[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]];
-  return mul(rz, mul(ry, base));
-}
-
-function mul(A, B) {
-  const C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] = A[i][0] * B[0][j] + A[i][1] * B[1][j] + A[i][2] * B[2][j];
-  return C;
-}
+export const rotation = (hold, yaw, pitch) => rotationInto([[0, 0, 0], [0, 0, 0], [0, 0, 0]], hold, yaw, pitch);
 
 // Everything about an orientation that doesn't depend on where the box is.
 // dims = [length, depth, height]. The box rests with its lowest point on the floor.
-export function orient(dims, R) {
-  const h = dims.map((d) => d / 2);
-  const zc = Math.abs(R[2][0]) * h[0] + Math.abs(R[2][1]) * h[1] + Math.abs(R[2][2]) * h[2]; // centre height
-  const verts = new Float64Array(24); // x, y, z offsets from the centre's floor point, z measured from the floor
-  let k = 0;
+// Pass `out` (a previous result) to reuse its arrays: the search builds millions of in-between orientations.
+export function orient(dims, R, out) {
+  const o = out ?? { R: null, verts: new Float64Array(24), axes: new Float64Array(16), nax: 0, top: 0, minx: 0, maxx: 0, miny: 0, maxy: 0 };
+  o.R = R;
+  const h0 = dims[0] / 2, h1 = dims[1] / 2, h2 = dims[2] / 2;
+  const zc = Math.abs(R[2][0]) * h0 + Math.abs(R[2][1]) * h1 + Math.abs(R[2][2]) * h2; // centre height
+  const verts = o.verts; // x, y, z offsets from the centre's floor point, z measured from the floor
+  let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
   for (let i = 0; i < 8; i++) {
-    const s0 = i & 1 ? 1 : -1, s1 = i & 2 ? 1 : -1, s2 = i & 4 ? 1 : -1;
-    for (let r = 0; r < 3; r++) verts[k++] = R[r][0] * s0 * h[0] + R[r][1] * s1 * h[1] + R[r][2] * s2 * h[2] + (r === 2 ? zc : 0);
+    const a = i & 1 ? h0 : -h0, b = i & 2 ? h1 : -h1, c = i & 4 ? h2 : -h2;
+    const x = R[0][0] * a + R[0][1] * b + R[0][2] * c, y = R[1][0] * a + R[1][1] * b + R[1][2] * c;
+    verts[3 * i] = x; verts[3 * i + 1] = y; verts[3 * i + 2] = R[2][0] * a + R[2][1] * b + R[2][2] * c + zc;
+    if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
   }
   // Candidate separating axes on the floor plan: x, y, each box axis's floor direction and its normal.
-  const axes = [1, 0, 0, 1];
+  const axes = o.axes;
+  axes[0] = 1; axes[1] = 0; axes[2] = 0; axes[3] = 1;
+  let k = 4;
   for (let c = 0; c < 3; c++) {
     const ax = R[0][c], ay = R[1][c], n = Math.hypot(ax, ay);
     if (n < 1e-9) continue;
-    axes.push(ax / n, ay / n, -ay / n, ax / n);
+    axes[k++] = ax / n; axes[k++] = ay / n; axes[k++] = -ay / n; axes[k++] = ax / n;
   }
-  let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
-  for (let i = 0; i < 8; i++) {
-    minx = Math.min(minx, verts[3 * i]); maxx = Math.max(maxx, verts[3 * i]);
-    miny = Math.min(miny, verts[3 * i + 1]); maxy = Math.max(maxy, verts[3 * i + 1]);
-  }
-  return { R, verts, top: 2 * zc, axes: Float64Array.from(axes), minx, maxx, miny, maxy };
+  o.nax = k; o.top = 2 * zc; o.minx = minx; o.maxx = maxx; o.miny = miny; o.maxy = maxy;
+  return o;
+}
+
+// Rotation for a hold, yaw and pitch, written into R (3x3, reused if given).
+export function rotationInto(R, hold, yaw, pitch) {
+  const cp = Math.cos(pitch), sp = Math.sin(pitch), cy = Math.cos(yaw), sy = Math.sin(yaw);
+  R[0][hold.a] = cp * cy; R[1][hold.a] = cp * sy; R[2][hold.a] = sp;   // tilting axis: along the yaw, raised by pitch
+  R[0][hold.w] = -sy; R[1][hold.w] = cy; R[2][hold.w] = 0;             // the other lying axis: stays level
+  R[0][hold.v] = -sp * cy; R[1][hold.v] = -sp * sy; R[2][hold.v] = cp; // the upright axis: leans back as it tilts
+  return R;
 }
 
 // Box edges as vertex index pairs (vertices differ in one bit).
@@ -92,8 +88,8 @@ export function clear(scene, o, x, y, m) {
     if (n === 0) continue;
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, hx = (x1 - x0) / 2, hy = (y1 - y0) / 2;
     let separated = false;
-    const ax = o.axes;
-    for (let k = 0; k < ax.length && !separated; k += 2) {
+    const ax = o.axes, nax = o.nax;
+    for (let k = 0; k < nax && !separated; k += 2) {
       const nx = ax[k], ny = ax[k + 1];
       let lo = Infinity, hi = -Infinity;
       for (let i = 0; i < n; i++) { const p = pts[2 * i] * nx + pts[2 * i + 1] * ny; if (p < lo) lo = p; if (p > hi) hi = p; }

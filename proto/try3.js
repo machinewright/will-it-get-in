@@ -1,0 +1,11 @@
+import { solve, reachOf } from '../src/plan.js';
+import { corner, sideDoor } from '../src/scene.js';
+const run = (name, dims, sc) => { const t0 = Date.now(); const r = solve(dims, sc); const holds = r.path ? [...new Set(r.path.map((p) => `${p.hold}/${Math.round(p.pitch * 180 / Math.PI)}`))].join(' ') : ''; console.log(name, r.found, r.explored, Date.now() - t0 + 'ms', holds.slice(0, 200)); };
+let d = [200, 75, 70]; run('A on end 240', d, corner({ a: 80, b: 80, ceiling: 240, reach: reachOf(d) }));
+run('A 215', d, corner({ a: 80, b: 80, ceiling: 215, reach: reachOf(d) }));
+run('A 205', d, corner({ a: 80, b: 80, ceiling: 205, reach: reachOf(d) }));
+d = [210, 95, 85]; run('B door 80x200', d, sideDoor({ a: 100, b: 80, doorH: 200, t: 12, past: 0, ceiling: 240, reach: reachOf(d) }));
+run('B door 80x200 past 100', d, sideDoor({ a: 100, b: 80, doorH: 200, t: 12, past: 100, ceiling: 240, reach: reachOf(d) }));
+run('B door 76x200', d, sideDoor({ a: 100, b: 76, doorH: 200, t: 12, past: 100, ceiling: 240, reach: reachOf(d) }));
+d = [200, 90, 85]; run('C corner 100 ceil 240', d, corner({ a: 100, b: 100, ceiling: 240, reach: reachOf(d) }));
+run('C corner 90 ceil 230', d, corner({ a: 90, b: 90, ceiling: 230, reach: reachOf(d) }));
