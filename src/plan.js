@@ -32,7 +32,7 @@ export function solve(dims, scene, opts = {}) {
   const px = [], py = [], pg = [];
   for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
     const x = x0 + i * step, y = y0 + j * step;
-    if (scene.inside(x, y)) { posAt[i + j * GW] = px.length; px.push(x); py.push(y); pg.push(i + j * GW); }
+    if (scene.inside(x, y) || scene.inside(x + step, y) || scene.inside(x, y + step) || scene.inside(x + step, y + step)) { posAt[i + j * GW] = px.length; px.push(x); py.push(y); pg.push(i + j * GW); }
   }
   const NPOS = px.length;
 
@@ -41,7 +41,19 @@ export function solve(dims, scene, opts = {}) {
   const oris = new Array(NO);
   const ori = (id) => oris[id] ?? (oris[id] = orientAt(id));
   function angles(id) { const p = id % NP, y = ((id - p) / NP) % NY, h = Math.floor(id / (NP * NY)); return { h, yaw: y * dYaw, pitch: p * dPitch }; }
-  function orientAt(id) { const a = angles(id); return orient(dims, rotation(HOLDS[a.h], a.yaw, a.pitch)); }
+  // Each orientation gets its own copy of the position grid, shifted so that the box's left edge and far edge land
+  // exactly `m` from the scene's snap walls. Then the box can be pressed against those walls at any angle, which is
+  // what the tightest ways round need; a fixed grid of centre points would keep it up to a step away.
+  const snap = scene.snap;
+  const fmod = (v) => ((v % step) + step) % step;
+  function orientAt(id) {
+    const a = angles(id), oo = orient(dims, rotation(HOLDS[a.h], a.yaw, a.pitch));
+    // (Plus 1.5 mm: a straight move between two pressed poses sags very slightly towards the wall, since the
+    // pressed path curves; this keeps such moves clear.)
+    oo.offx = snap ? fmod(snap.x + m + 0.15 - oo.minx - x0) : 0;
+    oo.offy = snap ? fmod(snap.y - m - 0.15 - oo.maxy - y0) : 0;
+    return oo;
+  }
   const oid = (h, y, p) => (h * NY + y) * NP + p;
 
   // Hold changes: same orientation reached through two holds (flat: pitch 0; on end: pitch 90).
@@ -70,14 +82,21 @@ export function solve(dims, scene, opts = {}) {
     if (n === cap) { cap *= 2; for (const nm of ['qo', 'qp', 'par']) { const g = new Int32Array(cap); g.set(nm === 'qo' ? qo : nm === 'qp' ? qp : par); if (nm === 'qo') qo = g; else if (nm === 'qp') qp = g; else par = g; } }
     qo[n] = id; qp[n] = pos; par[n] = parent; mark(id, pos); n++;
   }
-  const free = (id, pos) => clear(scene, ori(id), px[pos], py[pos], m);
+  const X = (id, pos) => px[pos] + ori(id).offx, Y = (id, pos) => py[pos] + ori(id).offy;
+  const free = (id, pos) => clear(scene, ori(id), X(id, pos), Y(id, pos), m);
 
   // A move from state A to state B (neighbours): check points along it.
   function moveClear(ida, posa, idb, posb) {
     const A = angles(ida), B = angles(idb);
-    if (A.h !== B.h) return true; // same orientation, same place: nothing moves
+    const xa = X(ida, posa), ya = Y(ida, posa), dx = X(idb, posb) - xa, dyy = Y(idb, posb) - ya;
+    if (A.h !== B.h) { // same orientation through another hold: only the grid shift can differ
+      if (Math.hypot(dx, dyy) < 1e-9) return true;
+      const k = Math.ceil(Math.hypot(dx, dyy) / (2 * slack));
+      for (let i = 1; i < k; i++) if (!clear(scene, ori(ida), xa + (i / k) * dx, ya + (i / k) * dyy, m)) return false;
+      return true;
+    }
     let dy = B.yaw - A.yaw; if (dy > Math.PI) dy -= 2 * Math.PI; if (dy < -Math.PI) dy += 2 * Math.PI;
-    const dp = B.pitch - A.pitch, dx = px[posb] - px[posa], dyy = py[posb] - py[posa];
+    const dp = B.pitch - A.pitch;
     // Longest path any point of the box can travel: translation + turning about the vertical + tilting (the tilt
     // also lifts or lowers the centre: at most the sum of the half sizes, < 2 * reach).
     const travel = Math.hypot(dx, dyy) + reach * Math.abs(dy) + 2.8 * reach * Math.abs(dp);
@@ -85,7 +104,7 @@ export function solve(dims, scene, opts = {}) {
     for (let i = 1; i < k; i++) {
       const t = i / k;
       const oo = orient(dims, rotation(HOLDS[A.h], A.yaw + t * dy, A.pitch + t * dp));
-      if (!clear(scene, oo, px[posa] + t * dx, py[posa] + t * dyy, m)) return false;
+      if (!clear(scene, oo, xa + t * dx, ya + t * dyy, m)) return false;
     }
     return true;
   }
@@ -122,27 +141,36 @@ export function solve(dims, scene, opts = {}) {
     for (let i = 0; i < GW; i++) {
       const pos = posAt[i + jSeed * GW];
       if (pos < 0 || isSeen(id, pos)) continue;
-      if (scene.start(extent(oo, px[pos], py[pos])) && free(id, pos)) push(id, pos, -1);
+      if (scene.start(extent(oo, X(id, pos), Y(id, pos))) && free(id, pos)) push(id, pos, -1);
     }
   }
   const seeds = n;
 
-  const steps = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   let found = -1, head = 0;
   while (head < n && found < 0 && n < o.maxStates) {
     const id = qo[head], pos = qp[head], me = head++;
     const p = id % NP, y = ((id - p) / NP) % NY, h = Math.floor(id / (NP * NY));
+    // Neighbours: shift by up to one step in x and y, turn by up to one step and tilt by up to one step, together
+    // (the tightest ways round need sliding while turning), plus changes of hold.
     const cand = [];
     const g = pg[pos], gi = g % GW, gj = (g - gi) / GW;
-    for (const [di, dj] of steps) {
-      const ii = gi + di, jj = gj + dj;
-      if (ii < 0 || ii >= GW || jj < 0 || jj >= GH) continue;
-      const q = posAt[ii + jj * GW];
-      if (q >= 0) cand.push(id, q);
+    const me0 = ori(id);
+    for (let dy = -1; dy <= 1; dy++) for (let dp = -1; dp <= 1; dp++) {
+      const pp = p + dp;
+      if (pp < 0 || pp >= NP) continue;
+      const nid = oid(h, (y + dy + NY) % NY, pp), no = ori(nid);
+      // Around the same centre, and around the cell that keeps the box's left and far edges where they are.
+      const si = Math.round((me0.offx + me0.minx - no.offx - no.minx) / step), sj = Math.round((me0.offy + me0.maxy - no.offy - no.maxy) / step);
+      for (const [ci, cj] of si || sj ? [[0, 0], [si, sj]] : [[0, 0]]) {
+        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+          if (!dy && !dp && !ci && !cj && !di && !dj) continue;
+          const ii = gi + ci + di, jj = gj + cj + dj;
+          if (ii < 0 || ii >= GW || jj < 0 || jj >= GH) continue;
+          const q = posAt[ii + jj * GW];
+          if (q >= 0) cand.push(nid, q);
+        }
+      }
     }
-    cand.push(oid(h, (y + 1) % NY, p), pos, oid(h, (y + NY - 1) % NY, p), pos);
-    if (p + 1 < NP) cand.push(oid(h, y, p + 1), pos);
-    if (p > 0) cand.push(oid(h, y, p - 1), pos);
     for (const j of same.get(id) ?? []) cand.push(j, pos);
     for (let c = 0; c < cand.length; c += 2) {
       const nid = cand[c], npos = cand[c + 1];
@@ -150,7 +178,7 @@ export function solve(dims, scene, opts = {}) {
       const no = ori(nid);
       if (no.top > scene.ceiling - m || !free(nid, npos) || !moveClear(id, pos, nid, npos)) continue;
       push(nid, npos, me);
-      if (scene.goal(extent(no, px[npos], py[npos]))) { found = n - 1; break; }
+      if (scene.goal(extent(no, X(nid, npos), Y(nid, npos)))) { found = n - 1; break; }
     }
   }
 
@@ -159,7 +187,7 @@ export function solve(dims, scene, opts = {}) {
     const path = [];
     for (let i = found; i >= 0; i = par[i]) {
       const a = angles(qo[i]);
-      path.push({ x: px[qp[i]], y: py[qp[i]], hold: a.h, yaw: a.yaw, pitch: a.pitch });
+      path.push({ x: X(qo[i], qp[i]), y: Y(qo[i], qp[i]), hold: a.h, yaw: a.yaw, pitch: a.pitch });
     }
     result.path = path.reverse();
   }

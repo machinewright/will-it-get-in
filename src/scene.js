@@ -7,7 +7,7 @@ const T = 30; // thickness of walls that only close the scene off
 // A hallway that turns a right-angle corner. Coming up the hallway (width `a`, along +y), turning right into the
 // other hallway (width `b`, along +x). The inside corner is at (a, 0).
 export function corner({ a, b, ceiling, reach }) {
-  const Y = 2 * reach + 40, X = Y;
+  const Y = 2 * reach + 40, X = a + Y; // long enough to get the whole box past the corner
   const blocks = [
     { x0: -T, x1: 0, y0: -Y - T, y1: b + T, zb: 0 },         // outside wall of the first hallway
     { x0: -T, x1: X + T, y0: b, y1: b + T, zb: 0 },          // outside wall of the second hallway
@@ -18,6 +18,7 @@ export function corner({ a, b, ceiling, reach }) {
   return {
     kind: 'corner', ceiling, blocks,
     bounds: { x0: 0, x1: X, y0: -Y, y1: b },
+    snap: { x: 0, y: b }, // the outside walls: the tightest ways round press against them
     seedY: -Y + reach + 5, // a row deep in the first hallway where any pose that fits the hallway is clear of its end
     inside: (x, y) => (x >= 0 && x <= a && y >= -Y && y <= b) || (y >= 0 && y <= b && x >= 0 && x <= X),
     start: (e) => e.maxy <= 0 && e.minx >= 0 && e.maxx <= a,
