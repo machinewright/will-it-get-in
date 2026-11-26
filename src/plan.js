@@ -1,0 +1,167 @@
+// Find a way to carry a box through a scene, or report that none exists on the search grid.
+//
+// A pose is (centre x, y on the floor plan; hold; yaw; pitch), with the box's lowest point on the floor. Poses lie
+// on a grid; neighbouring poses differ by one grid step in one coordinate, and a hold can change where two holds
+// give the same orientation (lying flat, or standing on end). The search is breadth-first from poses deep in the
+// place the box comes from, to any pose where it is entirely where it has to go.
+//
+// Why a found way is real and not just a chain of snapshots: every pose on it is clear by margin + d, and every move
+// between neighbouring poses is checked at points so close together that no part of the box travels more than 2d
+// between them. So at every moment in between, every point of the box is within d of a checked position, and the
+// whole movement keeps at least `margin` from walls, door frame and ceiling.
+
+import { HOLDS, rotation, orient, clear, extent } from './geom.js';
+
+export const DEFAULTS = { step: 2.5, yawSteps: 144, pitchSteps: 36, margin: 1, slack: 0.5, maxStates: 30e6 };
+
+export function reachOf(dims) { return Math.hypot(dims[0], dims[1], dims[2]) / 2; }
+
+export function solve(dims, scene, opts = {}) {
+  const o = { ...DEFAULTS, ...opts };
+  const { step, yawSteps: NY, pitchSteps, margin, slack } = o;
+  const NP = pitchSteps + 1; // pitch 0 .. 90 degrees inclusive
+  const NH = HOLDS.length;
+  const m = margin + slack;
+  const reach = reachOf(dims);
+  const dYaw = (2 * Math.PI) / NY, dPitch = Math.PI / 2 / pitchSteps;
+
+  // Positions: grid points (centres) inside the scene's region.
+  const { x0, x1, y0, y1 } = scene.bounds;
+  const GW = Math.floor((x1 - x0) / step) + 1, GH = Math.floor((y1 - y0) / step) + 1;
+  const posAt = new Int32Array(GW * GH).fill(-1);
+  const px = [], py = [], pg = [];
+  for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+    const x = x0 + i * step, y = y0 + j * step;
+    if (scene.inside(x, y)) { posAt[i + j * GW] = px.length; px.push(x); py.push(y); pg.push(i + j * GW); }
+  }
+  const NPOS = px.length;
+
+  // Orientations, built on demand.
+  const NO = NH * NY * NP;
+  const oris = new Array(NO);
+  const ori = (id) => oris[id] ?? (oris[id] = orientAt(id));
+  function angles(id) { const p = id % NP, y = ((id - p) / NP) % NY, h = Math.floor(id / (NP * NY)); return { h, yaw: y * dYaw, pitch: p * dPitch }; }
+  function orientAt(id) { const a = angles(id); return orient(dims, rotation(HOLDS[a.h], a.yaw, a.pitch)); }
+  const oid = (h, y, p) => (h * NY + y) * NP + p;
+
+  // Hold changes: same orientation reached through two holds (flat: pitch 0; on end: pitch 90).
+  const same = new Map(); // oid -> [oid...]
+  for (const p of [0, NP - 1]) {
+    const keyOf = new Map();
+    for (let h = 0; h < NH; h++) for (let y = 0; y < NY; y++) {
+      const id = oid(h, y, p), v = ori(id).verts, ks = [];
+      for (let i = 0; i < 8; i++) ks.push(`${Math.round(v[3 * i] * 1e3)},${Math.round(v[3 * i + 1] * 1e3)},${Math.round(v[3 * i + 2] * 1e3)}`);
+      const key = ks.sort().join(';');
+      if (!keyOf.has(key)) keyOf.set(key, []);
+      keyOf.get(key).push(id);
+    }
+    for (const ids of keyOf.values()) for (const id of ids) same.set(id, ids.filter((j) => j !== id));
+  }
+
+  // Visited sets, one bitset per orientation, allocated when first needed.
+  const seen = new Array(NO);
+  const words = (NPOS + 31) >>> 5;
+  const isSeen = (id, pos) => { const s = seen[id]; return s !== undefined && (s[pos >>> 5] & (1 << (pos & 31))) !== 0; };
+  const mark = (id, pos) => { (seen[id] ?? (seen[id] = new Int32Array(words)))[pos >>> 5] |= 1 << (pos & 31); };
+
+  // Queue of states (orientation, position) with parents, for the way back.
+  let cap = 1 << 16, qo = new Int32Array(cap), qp = new Int32Array(cap), par = new Int32Array(cap), n = 0;
+  function push(id, pos, parent) {
+    if (n === cap) { cap *= 2; for (const nm of ['qo', 'qp', 'par']) { const g = new Int32Array(cap); g.set(nm === 'qo' ? qo : nm === 'qp' ? qp : par); if (nm === 'qo') qo = g; else if (nm === 'qp') qp = g; else par = g; } }
+    qo[n] = id; qp[n] = pos; par[n] = parent; mark(id, pos); n++;
+  }
+  const free = (id, pos) => clear(scene, ori(id), px[pos], py[pos], m);
+
+  // A move from state A to state B (neighbours): check points along it.
+  function moveClear(ida, posa, idb, posb) {
+    const A = angles(ida), B = angles(idb);
+    if (A.h !== B.h) return true; // same orientation, same place: nothing moves
+    let dy = B.yaw - A.yaw; if (dy > Math.PI) dy -= 2 * Math.PI; if (dy < -Math.PI) dy += 2 * Math.PI;
+    const dp = B.pitch - A.pitch, dx = px[posb] - px[posa], dyy = py[posb] - py[posa];
+    // Longest path any point of the box can travel: translation + turning about the vertical + tilting (the tilt
+    // also lifts or lowers the centre: at most the sum of the half sizes, < 2 * reach).
+    const travel = Math.hypot(dx, dyy) + reach * Math.abs(dy) + 2.8 * reach * Math.abs(dp);
+    const k = Math.ceil(travel / (2 * slack));
+    for (let i = 1; i < k; i++) {
+      const t = i / k;
+      const oo = orient(dims, rotation(HOLDS[A.h], A.yaw + t * dy, A.pitch + t * dp));
+      if (!clear(scene, oo, px[posa] + t * dx, py[posa] + t * dyy, m)) return false;
+    }
+    return true;
+  }
+
+  // Which orientations can the box be turned into in open space under this ceiling, starting upright (height
+  // axis vertical)? Only those are allowed when it enters. Yaw turns and hold changes are free there; tilting is
+  // checked against the ceiling along the way.
+  const ceilingOK = (h, yaw, p0, p1) => {
+    const travelMax = Math.abs(p1 - p0) * 2.8 * reach, k = Math.max(1, Math.ceil(travelMax / (2 * slack)));
+    for (let i = 0; i <= k; i++) if (orient(dims, rotation(HOLDS[h], yaw, p0 + (i / k) * (p1 - p0))).top > scene.ceiling - m) return false;
+    return true;
+  };
+  const enter = new Uint8Array(NO), stack = [];
+  for (let h = 0; h < NH; h++) if (HOLDS[h].v === 2) for (let y = 0; y < NY; y++) {
+    const id = oid(h, y, 0);
+    if (ori(id).top <= scene.ceiling - m) { enter[id] = 1; stack.push(id); }
+  }
+  while (stack.length) {
+    const id = stack.pop(), p = id % NP, y = ((id - p) / NP) % NY, h = Math.floor(id / (NP * NY));
+    const next = [oid(h, (y + 1) % NY, p), oid(h, (y + NY - 1) % NY, p), ...(same.get(id) ?? [])];
+    for (const j of next) if (!enter[j]) { enter[j] = 1; stack.push(j); }
+    for (const q of [p - 1, p + 1]) {
+      if (q < 0 || q >= NP) continue;
+      const j = oid(h, y, q);
+      if (!enter[j] && ceilingOK(h, y * dYaw, p * dPitch, q * dPitch)) { enter[j] = 1; stack.push(j); }
+    }
+  }
+
+  // Seeds: every clear pose on one row deep in the place the box comes from, in an orientation it can enter in.
+  const jSeed = Math.round((scene.seedY - y0) / step);
+  for (let id = 0; id < NO; id++) {
+    const oo = ori(id);
+    if (!enter[id]) continue;
+    for (let i = 0; i < GW; i++) {
+      const pos = posAt[i + jSeed * GW];
+      if (pos < 0 || isSeen(id, pos)) continue;
+      if (scene.start(extent(oo, px[pos], py[pos])) && free(id, pos)) push(id, pos, -1);
+    }
+  }
+  const seeds = n;
+
+  const steps = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  let found = -1, head = 0;
+  while (head < n && found < 0 && n < o.maxStates) {
+    const id = qo[head], pos = qp[head], me = head++;
+    const p = id % NP, y = ((id - p) / NP) % NY, h = Math.floor(id / (NP * NY));
+    const cand = [];
+    const g = pg[pos], gi = g % GW, gj = (g - gi) / GW;
+    for (const [di, dj] of steps) {
+      const ii = gi + di, jj = gj + dj;
+      if (ii < 0 || ii >= GW || jj < 0 || jj >= GH) continue;
+      const q = posAt[ii + jj * GW];
+      if (q >= 0) cand.push(id, q);
+    }
+    cand.push(oid(h, (y + 1) % NY, p), pos, oid(h, (y + NY - 1) % NY, p), pos);
+    if (p + 1 < NP) cand.push(oid(h, y, p + 1), pos);
+    if (p > 0) cand.push(oid(h, y, p - 1), pos);
+    for (const j of same.get(id) ?? []) cand.push(j, pos);
+    for (let c = 0; c < cand.length; c += 2) {
+      const nid = cand[c], npos = cand[c + 1];
+      if (isSeen(nid, npos)) continue;
+      const no = ori(nid);
+      if (no.top > scene.ceiling - m || !free(nid, npos) || !moveClear(id, pos, nid, npos)) continue;
+      push(nid, npos, me);
+      if (scene.goal(extent(no, px[npos], py[npos]))) { found = n - 1; break; }
+    }
+  }
+
+  const result = { found: found >= 0, explored: n, seeds, capped: found < 0 && n >= o.maxStates, path: null };
+  if (found >= 0) {
+    const path = [];
+    for (let i = found; i >= 0; i = par[i]) {
+      const a = angles(qo[i]);
+      path.push({ x: px[qp[i]], y: py[qp[i]], hold: a.h, yaw: a.yaw, pitch: a.pitch });
+    }
+    result.path = path.reverse();
+  }
+  return result;
+}
