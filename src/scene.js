@@ -99,7 +99,10 @@ export function stairs({ w, n, rise, going, headroom, hc, b, turn = true, reach 
   const ramp = { rise, going, n };
   const common = {
     kind: 'stairs', ceiling: H + hc, startCeiling: hc, ramp, stairs: { w, n, rise, going, Y0, yb, headroom, hc, turn, b },
-    liftFactor: 2 + rise / going, // a point's height changes with the slope as it moves (see plan.js)
+    // How much further a point can move than without stairs: the item's height is the most, over its points, of
+    // (slope height under the point - the point's own height); a point moving d changes its term by at most
+    // slope x (its move along y) + (its move up or down) <= sqrt(1 + slope^2) d, so the height changes by no more.
+    liftFactor: 1 + Math.hypot(1, rise / going),
     seed: { x: w / 2, y: -Y + reach + 5 },
     viewFrom: -0.3, viewEl: 0.25, viewZ: (H + hc) / 2, viewOrtho: true, // from the side, to see the flight
   };

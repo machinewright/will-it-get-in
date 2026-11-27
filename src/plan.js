@@ -27,7 +27,7 @@ export function solve(dims, scene, opts = {}) {
   const reach = reachOf(dims);
   const dYaw = (2 * Math.PI) / NY, dPitch = Math.PI / 2 / pitchSteps;
   // On stairs the item's height follows the slope under it, so its points also move up and down: a point that
-  // moves by d along the floor plan or its own height rises or falls by at most (1 + slope) d more (see geom.js).
+  // moves by d (with the item's lowest point held still) rises or falls by at most sqrt(1 + slope^2) d more (scene.js).
   const LF = scene.liftFactor ?? 1;
 
   // Positions: grid points (centres) inside the scene's region.
@@ -137,6 +137,9 @@ export function solve(dims, scene, opts = {}) {
     // Longest path any point of the box can travel: translation + turning about the vertical + tilting (the tilt
     // also lifts or lowers the centre: at most the sum of the half sizes, < 2 * reach).
     const travel = Math.hypot(dx, dyy) + reach * Math.abs(dy) + 2.8 * reach * Math.abs(dp);
+    // In open space: if A is clear by more than the furthest any point moves, the whole move is (blocks and ceiling
+    // grow by the margin in every direction, which contains a ball of that radius).
+    if (clear(scene, ori(ida), xa, ya, m + travel * LF)) return true;
     const k = Math.ceil(travel * LF / (2 * slack));
     for (let i = 1; i < k; i++) {
       const t = i / k;

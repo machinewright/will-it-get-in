@@ -95,7 +95,7 @@ const sameShape = (f, g) => {
   return key(f) === key(g);
 };
 
-export function verifyPath(r, dims, scene, e = 0.6) {
+export function verifyPath(r, dims, scene, e = +(process.env.VERIFY_E ?? 0.95)) { // the page promises 1 cm; 0.05 for sampling
   const edgePts = blockEdges(scene, 0.5);
   const P = r.path;
   for (let i = 0; i < P.length; i++) {

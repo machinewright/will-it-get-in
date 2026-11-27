@@ -208,9 +208,9 @@ function showLongest(m, dims, isSofa) {
     ? `A sofa of this shape (${what.replace('with ', 'same ')}, seat, back and arms) gets through here at <b>${fmt(m.value)}</b> long; at a centimetre longer I found no way. (Its arms sit at its ends, so a shorter sofa isn't simply a part of a longer one: check other lengths on their own.)`
     : `A box ${what} gets through here up to <b>${fmt(m.value)}</b> long. (I found a way at that length, and none a centimetre longer.)`;
   else if (m.atLeast) t = `Length isn't what limits it here: ${isSofa ? 'one' : 'a box'} ${what} got through at every length I tried, up to ${fmt(m.atLeast)}.`;
-  else if (m.between) t = `${isSofa ? 'A sofa' : 'A box'} ${what} gets through here up to at least ${fmt(m.between[0])} long; I couldn't settle lengths between that and ${fmt(m.between[1])} (the search got too big).`;
+  else if (m.between) t = `${isSofa ? 'A sofa' : 'A box'} ${what} gets through here up to at least ${fmt(m.between[0])} long; I couldn't settle lengths between that and ${fmt(m.between[1])} (the searches got too long).`;
   else if (m.none || m.skip) t = '';
-  else t = 'I couldn\'t work out the longest that would get through (the search got too big).';
+  else t = 'I couldn\'t work out the longest that would get through (the searches got too long).';
   $('#longest').innerHTML = t; $('#longest').hidden = !t;
 }
 

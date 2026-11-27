@@ -87,7 +87,11 @@ export function describe(before, path, spot = 'the tight spot', dims = [1, 1, 1]
       }
       if (moved && P[i].loc === 'stairs') {
         const a = post.lift, b = P[j].post.lift;
-        steps.push(`Carry it up the stairs ${post.text.replace(/^with /, 'with ')}${a !== undefined && b !== undefined && Math.abs(b - a) >= 10 ? `, ${b > a ? 'raising' : 'lowering'} that end to about ${b}° on the way up` : ''}.`);
+        // How the angle changes on the way up: lifted end, or a tilt (from the end of the phase's wording).
+        const ta = /tilted about (\d+)°/.exec(post.text)?.[1], tb = /tilted about (\d+)°/.exec(P[j].post.text)?.[1];
+        const change = a !== undefined && b !== undefined && Math.abs(b - a) >= 10 ? `, ${b > a ? 'raising' : 'lowering'} that end to about ${b}° on the way up`
+          : ta !== undefined && tb !== undefined && P[j].post.kind === post.kind && Math.abs(tb - ta) >= 10 ? `, easing to about ${tb}° on the way up` : '';
+        steps.push(`Carry it up the stairs ${post.text}${change}.`);
       }
     }
     const q = Math.round(Math.abs(turn * DEG) / 5) * 5;

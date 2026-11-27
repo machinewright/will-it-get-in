@@ -26,11 +26,13 @@ self.onmessage = (e) => {
       ms: Math.round(performance.now() - t0), path, before: r.before ?? null,
       steps: r.found ? describe(r.before, path, scene.spot, dims, scene) : null,
     });
+    // The follow-ups below get a time budget (stairs can take long): past it, each search counts as unsettled.
+    const deadline = performance.now() + 60000, late = () => performance.now() > deadline;
     // When it doesn't get through: how much wider the tight spot would have to be (both hallways at a corner, the
     // door opening at a door), to the nearest cm.
     if (!r.found && !r.capped) {
       const keys = kind === 'corner' ? ['a', 'b'] : kind === 'stairs' ? (params.b > 0 ? ['w', 'b'] : ['w']) : ['b'];
-      const wider = (k) => { const pp = { ...params }; for (const key of keys) pp[key] += k; const q = solve(dims, sceneFor(kind, pp, dims), { maxStates: 1.5e6 }); return q.capped ? null : q.found; };
+      const wider = (k) => { if (late()) return null; const pp = { ...params }; for (const key of keys) pp[key] += k; const q = solve(dims, sceneFor(kind, pp, dims), { maxStates: 1.5e6 }); return q.capped ? null : q.found; };
       let lo = 0, hi = null;
       for (let k = r.doorTooSmall ? Math.ceil(Math.min(...dims) + 2 - params.b) : 5; k <= 160; k += 10) { const f = wider(k); if (f === null) break; if (f) { hi = k; break; } lo = k; }
       if (hi !== null) {
@@ -42,7 +44,7 @@ self.onmessage = (e) => {
     }
     // The longest box with the same depth and height that gets through (to the nearest cm), by halving.
     if (dims[0] < Math.max(dims[1], dims[2])) { self.postMessage({ id, type: 'longest', skip: true }); return; } // length isn't the longest side
-    const fits = (len) => { const d = shape ? sofa({ L: len, D: dims[1], H: dims[2], ...shape }) : [len, dims[1], dims[2]]; if (d.error) return false; const q = solve(d, sceneFor(kind, params, d), { maxStates: 2e6 }); return q.capped ? null : q.found; };
+    const fits = (len) => { if (late()) return null; const d = shape ? sofa({ L: len, D: dims[1], H: dims[2], ...shape }) : [len, dims[1], dims[2]]; if (d.error) return false; const q = solve(d, sceneFor(kind, params, d), { maxStates: 2e6 }); return q.capped ? null : q.found; };
     const floor = Math.max(dims[1], dims[2]);
     let lo, hi;
     if (r.found) {
