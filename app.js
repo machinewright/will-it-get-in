@@ -42,7 +42,7 @@ const NOTES = {
   corner: 'Measure each hallway at its narrowest, wall to wall (skirting boards, radiators and door frames stick out).',
   sideDoor: 'Measure the door opening with the door fully open, between the door stops (and the open door itself, if it sticks into the opening). It works the same in either direction: hallway into room, or room into hallway.',
   roomDoor: 'For a door between two rooms, or the front door from outside. Measure the opening with the door fully open, between the door stops.',
-  stairs: 'A straight flight between walls, with the hallway at the top turning off to one side (or 0: the way goes straight on). Headroom: where the ceiling edge comes lowest over the stairs, measure straight up from the step edge below it. I treat the stairs as a slope through the step edges (a little less room than the real steps), and it\'s carried at the lowest height that clears them. It comes along a hallway as wide as the stairs (if yours is wider, there may be a little more room than this shows).',
+  stairs: 'Headroom (E): find where the ceiling comes lowest over the stairs (usually the edge of the floor above) and measure straight up from the edge of the step below it. The hallway at the bottom is taken to be as wide as the stairs. G is the hallway the top of the stairs turns into; 0 if you go straight on.',
 };
 
 // ---- State, units ----
@@ -102,17 +102,19 @@ function readForm() {
   const num = (el) => { const v = parseFloat(el.value); if (!(v > 0)) { errs.push(el); return NaN; } return toCm(v); };
   const dims = ['L', 'D', 'H'].map((id) => num($('#' + id)));
   const params = {};
+  let countErr = false;
   for (const el of document.querySelectorAll('#spotFields input')) {
     const key = el.dataset.key;
-    if (isCount(key)) { const v = parseInt(el.value, 10); if (!(v >= 2 && v <= 30)) errs.push(el); params[key] = v; }
-    else params[key] = zeroOK(key) ? Math.max(0, toCm(parseFloat(el.value) || 0)) : num(el);
+    if (isCount(key)) { const v = Number(el.value); if (!(Number.isInteger(v) && v >= 2 && v <= 30)) { countErr = true; errs.push(el); } params[key] = v; }
+    else if (zeroOK(key)) { const v = parseFloat(el.value); if (!(v >= 0)) errs.push(el); params[key] = Math.max(0, toCm(v || 0)); }
+    else params[key] = num(el);
   }
   let shape = null;
   if (state.isSofa) {
     shape = {};
     for (const k of SHAPE_KEYS) { const el = $('#' + k), v = parseFloat(el.value); if (!(v >= 0) || (v === 0 && (k === 'seatH' || k === 'backT'))) errs.push(el); shape[k] = toCm(v); }
   }
-  return { dims, params, errs, shape };
+  return { dims, params, errs, shape, countErr };
 }
 
 // Sizes are kept in cm, from what was typed (converted once); switching units only changes the display, so
@@ -127,17 +129,20 @@ document.querySelector('#form').addEventListener('input', (e) => {
 });
 $('#isSofa').addEventListener('change', () => { state.isSofa = $('#isSofa').checked; $('#sofaFields').hidden = !state.isSofa; save(); });
 $('#unit').addEventListener('change', () => { state.unit = $('#unit').value; renderForm(); save(); });
-document.querySelectorAll('input[name=kind]').forEach((r) => r.addEventListener('change', () => { state.kind = r.value; renderForm(); save(); }));
+document.querySelectorAll('input[name=kind]').forEach((r) => r.addEventListener('change', () => { state.kind = r.value; renderForm(); save(); clearAnswer(); }));
+// An answer belongs to the sizes it was worked out for: hide it when those change or a new check starts.
+function clearAnswer() { $('#out').hidden = true; stop(); if (worker) { worker.terminate(); worker = null; } clearInterval(timer); $('#go').disabled = false; $('#status').textContent = ''; }
 
 // ---- Checking ----
 let worker = null, runId = 0, timer = null;
 $('#form').addEventListener('submit', (e) => { e.preventDefault(); check(); });
 
 function check() {
-  const { dims, params, errs, shape } = readForm();
+  clearAnswer();
+  const { dims, params, errs, shape, countErr } = readForm();
   if (shape && !errs.length) { const t = sofa({ L: dims[0], D: dims[1], H: dims[2], ...shape }); if (t.error) { $('#status').textContent = t.error; return; } }
   for (const el of document.querySelectorAll('#form input[type=number]')) el.setAttribute('aria-invalid', errs.includes(el) ? 'true' : 'false');
-  if (errs.length) { $('#status').textContent = 'Please fill in every size (numbers above zero).'; errs[0].focus(); return; }
+  if (errs.length) { $('#status').textContent = countErr ? 'The number of steps must be a whole number from 2 to 30.' : `Please fill in every size (numbers above zero${state.kind === 'stairs' ? '; 0 is fine for the hallway at the top' : ''}).`; errs[0].focus(); return; }
   if (params.doorH && params.doorH > params.ceiling) params.doorH = params.ceiling;
   if (state.kind === 'stairs') {
     const p = params, why = p.headroom > p.hc - p.rise ? `The headroom can't be more than the ceiling height less one step (${fmt(p.hc - p.rise)}): over the first step the ceiling is at most that high above it.`
@@ -183,6 +188,7 @@ function showResult(m, dims, kind, params) {
       v.innerHTML = `No, this box can't go through this door with 1 cm to spare.<span class="sub">Its shortest side (${fmt(s)}) is wider than the opening less a 1 cm margin each side (${fmt(params.b - 2)}). However you turn it, the line through its middle, across the doorway, is at least that long.</span>`;
     } else if (m.noStart) {
       v.innerHTML = kind === 'roomDoor' ? `No: I found no way to start it through the door.<span class="sub">Check the sizes: in no position I tried does its leading part fit the opening.</span>`
+        : kind === 'stairs' ? `No: I couldn't fit it into the hallway at the foot of the stairs.<span class="sub">That hallway is taken to be as wide as the stairs (A). In every position I tried that fits under the ceiling, it's wider than that (keeping about 1.5 cm each side).</span>`
         : `No: I couldn't fit it into the hallway before ${SPOT[kind]}.<span class="sub">In every position I tried that fits under the ceiling, it's wider than the hallway (keeping about 1.5 cm each side).</span>`;
     } else if (m.capped) {
       v.innerHTML = `I couldn't settle this one.<span class="sub">The search grew too big for a browser before it found a way or ran out of options. It's close either way: measure again carefully.</span>`;
