@@ -49,10 +49,15 @@ function shapePosture(R) {
 const sameKind = (p, q) => p.kind === q.kind || (p.kind.startsWith('lift') && q.kind.startsWith('lift'));
 
 // spot: what the tight spot is called ('the corner', 'the door').
-export function describe(before, path, spot = 'the tight spot', dims = [1, 1, 1]) {
+// scene: if it has stairs, the steps also say where on them each change happens (path poses carry their height z).
+export function describe(before, path, spot = 'the tight spot', dims = [1, 1, 1], scene = null) {
   dimsOf = dims;
   const steps = [];
-  const P = path.map((p) => ({ ...p, post: posture(p, dims) }));
+  const H = scene?.stairs ? scene.stairs.n * scene.stairs.rise : 0;
+  // At the foot until its middle is past the first step's edge; at the top once it's level with the floor above.
+  const loc = (p) => (!H || p.y < 0 ? 'foot' : p.z >= H - 0.01 ? 'top' : 'stairs');
+  let topSaid = false;
+  const P = path.map((p) => ({ ...p, post: posture(p, dims), loc: loc(p) }));
   // Say how to get it into its starting position only when that's more than lifting an end a little.
   if (before && before.length > 1 && !(P[0].post.kind === 'lift' && P[0].post.lift <= 30)) {
     steps.push(`Before it goes in, where there's room, get it ${P[0].post.text}.`);
@@ -63,12 +68,28 @@ export function describe(before, path, spot = 'the tight spot', dims = [1, 1, 1]
   while (i < P.length) {
     let j = i;
     let turn = 0;
-    while (j + 1 < P.length && sameKind(P[j + 1].post, P[i].post)) {
+    while (j + 1 < P.length && sameKind(P[j + 1].post, P[i].post) && P[j + 1].loc === P[i].loc) {
       if (P[j + 1].hold === P[j].hold) { let d = P[j + 1].yaw - P[j].yaw; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; turn += d; }
       j++;
     }
     const post = P[i].post;
-    if (i > 0) steps.push(enter(P[i - 1], P[i], P[j]));
+    if (i > 0) {
+      const moved = P[i].loc !== P[i - 1].loc, changed = !sameKind(P[i].post, P[i - 1].post);
+      if (changed || !moved) {
+        const t = enter(P[i - 1], P[i], P[j]);
+        const first = P[i].loc === 'top' && !topSaid;
+        if (first) topSaid = true;
+        steps.push(first ? 'At the top, ' + t[0].toLowerCase() + t.slice(1) : t);
+      }
+      if (moved && !changed && P[i].loc === 'top' && post.lift !== undefined && P[j].post.lift !== undefined && Math.abs(P[j].post.lift - post.lift) >= 10) {
+        topSaid = true;
+        steps.push(`At the top, ${P[j].post.lift > post.lift ? 'raise' : 'lower'} that end to about ${P[j].post.lift}°.`);
+      }
+      if (moved && P[i].loc === 'stairs') {
+        const a = post.lift, b = P[j].post.lift;
+        steps.push(`Carry it up the stairs ${post.text.replace(/^with /, 'with ')}${a !== undefined && b !== undefined && Math.abs(b - a) >= 10 ? `, ${b > a ? 'raising' : 'lowering'} that end to about ${b}° on the way up` : ''}.`);
+      }
+    }
     const q = Math.round(Math.abs(turn * DEG) / 5) * 5;
     if (q >= 15) steps.push(`${i === 0 ? 'At ' + spot + ', turn' : 'Turn'} it about ${q}° as you go${q >= 75 && q <= 105 ? ' (roughly a quarter turn)' : ''}${post.kind === 'upright' ? '' : ', still ' + post.text.replace(/^with /, 'with ')}.`);
     i = j + 1;

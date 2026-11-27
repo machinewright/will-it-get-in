@@ -10,7 +10,7 @@
 // between them. So at every moment in between, every point of the box is within d of a checked position, and the
 // whole movement keeps at least `margin` from walls, door frame and ceiling.
 
-import { holdsFor, rotation, rotationInto, orient, clear, extent, liftOf } from './geom.js';
+import { holdsFor, rotation, rotationInto, orient, clear, extent, liftOf, rampAt } from './geom.js';
 
 export const DEFAULTS = { greed: 2, step: 2.5, yawSteps: 144, pitchSteps: 36, margin: 1, slack: 0.5, maxStates: 6e6 };
 
@@ -263,10 +263,11 @@ export function solve(dims, scene, opts = {}) {
   } else {
   // Seeds: every clear pose in an orientation it can enter in, on the centre line deep in the hallway it comes from
   // (a pose that fits a straight hallway anywhere fits it centred; a cell either side allows for the grid).
-  const jSeed = Math.round((scene.seed.y - y0) / step), iSeed = Math.round((scene.seed.x - x0) / step);
+  // (Centred means its shadow is centred: for a sofa held tilted that isn't where its bounding box's centre is.)
+  const jSeed = Math.round((scene.seed.y - y0) / step);
   for (let id = 0; id < NO; id++) {
-    const oo = ori(id);
     if (!enter(id)) continue;
+    const oo = ori(id), iSeed = Math.round((scene.seed.x - (oo.minx + oo.maxx) / 2 - oo.offx - x0) / step);
     for (let i = iSeed - 1; i <= iSeed + 1; i++) {
       const pos = i >= 0 && i < GW ? posAt[i + jSeed * GW] : -1;
       if (pos < 0 || isSeen(id, pos)) continue;
@@ -312,7 +313,11 @@ export function solve(dims, scene, opts = {}) {
       if (no.top > scene.ceiling - m || !free(nid, npos)) { markBlocked(nid, npos); continue; }
       if (!moveClear(id, pos, nid, npos)) continue;
       const pn = nid % NP, yn = ((nid - pn) / NP) % NY, dyn = Math.min(Math.abs(yn - y), NY - Math.abs(yn - y));
-      const cost = Math.hypot(X(nid, npos) - X(id, pos), Y(nid, npos) - Y(id, pos)) + reach * (dyn * dYaw + Math.abs(pn - p) * dPitch) + 0.1;
+      const walk = Math.hypot(X(nid, npos) - X(id, pos), Y(nid, npos) - Y(id, pos));
+      let cost = walk + reach * (dyn * dYaw + Math.abs(pn - p) * dPitch) + 0.1;
+      // On stairs, prefer carrying it low along the slope over holding it high above the steps (only a preference:
+      // every move is checked the same either way).
+      if (scene.ramp) { const yc = Y(nid, npos) + (no.miny + no.maxy) / 2; cost += walk * Math.max(0, liftOf(scene.ramp, no, Y(nid, npos)) - rampAt(scene.ramp, yc)) / 15; }
       push(nid, npos, me, gc[me] + cost);
       if (scene.goal(extent(no, X(nid, npos), Y(nid, npos)))) { found = n - 1; break; }
     }

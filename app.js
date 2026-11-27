@@ -42,7 +42,7 @@ const NOTES = {
   corner: 'Measure each hallway at its narrowest, wall to wall (skirting boards, radiators and door frames stick out).',
   sideDoor: 'Measure the door opening with the door fully open, between the door stops (and the open door itself, if it sticks into the opening). It works the same in either direction: hallway into room, or room into hallway.',
   roomDoor: 'For a door between two rooms, or the front door from outside. Measure the opening with the door fully open, between the door stops.',
-  stairs: 'A straight flight between walls, with the hallway at the top turning off to one side (or 0: the way goes straight on). Headroom: where the ceiling edge comes lowest over the stairs, measure straight up from the step edge below it. I treat the stairs as a slope through the step edges (a little less room than the real steps), and it\'s carried at the lowest height that clears them.',
+  stairs: 'A straight flight between walls, with the hallway at the top turning off to one side (or 0: the way goes straight on). Headroom: where the ceiling edge comes lowest over the stairs, measure straight up from the step edge below it. I treat the stairs as a slope through the step edges (a little less room than the real steps), and it\'s carried at the lowest height that clears them. It comes along a hallway as wide as the stairs (if yours is wider, there may be a little more room than this shows).',
 };
 
 // ---- State, units ----

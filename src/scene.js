@@ -101,7 +101,7 @@ export function stairs({ w, n, rise, going, headroom, hc, b, turn = true, reach 
     kind: 'stairs', ceiling: H + hc, startCeiling: hc, ramp, stairs: { w, n, rise, going, Y0, yb, headroom, hc, turn, b },
     liftFactor: 2 + rise / going, // a point's height changes with the slope as it moves (see plan.js)
     seed: { x: w / 2, y: -Y + reach + 5 },
-    viewFrom: -Math.PI / 2 - 0.55,
+    viewFrom: -0.3, viewEl: 0.25, viewZ: (H + hc) / 2, viewOrtho: true, // from the side, to see the flight
   };
   const bulk = { x0: 0, x1: w, y0: -Y - T, y1: Math.min(yb, Y0), zb: hc }; // ceiling of the bottom floor, up to the bulkhead
   if (turn) {

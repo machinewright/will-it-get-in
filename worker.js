@@ -24,7 +24,7 @@ self.onmessage = (e) => {
     self.postMessage({
       id, type: 'result', found: r.found, capped: r.capped, noStart: !r.found && !r.doorTooSmall && r.seeds === 0, doorTooSmall: !!r.doorTooSmall, explored: r.explored,
       ms: Math.round(performance.now() - t0), path, before: r.before ?? null,
-      steps: r.found ? describe(r.before, path, scene.spot, dims) : null,
+      steps: r.found ? describe(r.before, path, scene.spot, dims, scene) : null,
     });
     // When it doesn't get through: how much wider the tight spot would have to be (both hallways at a corner, the
     // door opening at a door), to the nearest cm.

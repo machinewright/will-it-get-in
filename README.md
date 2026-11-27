@@ -31,8 +31,13 @@ one with the same depth and height that would.
   corner at every angle; reproduces the textbook ladder formula); the search agrees with it to within 1 cm on 11
   cases and never finds a way the rule rules out. Every way found in random scenes is re-checked by separately
   written geometry (point sampling, its own rotations). Plus hand-argued cases.
+- Stairs: the flight is treated as the slope through the step edges (every tread lies under it), and the item rides
+  at the lowest height clearing that slope, computed exactly from its corners plus its cross-section at the top
+  edge (tested against dense surface sampling). Ways found on stairs are re-checked against the real treads and
+  step edges, and for continuous height between sub-steps; deliberately broken versions of the slope and the
+  height are caught by these tests.
 
-What it doesn't model: stairs, radiators and fittings, doors that don't open fully, and the shape of a real sofa
+What it doesn't model: winders or mid-flight landings, radiators and fittings, doors that don't open fully, and the shape of a real sofa
 (arms and backs leave gaps movers use; if the box fits, the sofa does, not the other way round).
 
 No build step, no dependencies, nothing leaves the browser.

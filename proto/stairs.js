@@ -7,3 +7,5 @@ const t = Date.now();
 const r = solveTwoStage(dims, sc);
 console.log(dims, 'w', w, 'hr', hr, 'turn', turn, '->', r.found, 'explored', r.explored, 'capped', r.capped, (Date.now() - t) + 'ms');
 if (r.found) { const p = smooth(dims, sc, r.path); for (const q of p) console.log(q.x.toFixed(1), q.y.toFixed(1), (q.z ?? 0).toFixed(1), q.hold, (q.yaw * 57.3).toFixed(0), (q.pitch * 57.3).toFixed(0)); }
+import { describe } from '../src/describe.js';
+if (r.found) console.log(describe(r.before, smooth(dims, sc, r.path), sc.spot, dims, sc).join('\n'));

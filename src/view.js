@@ -20,10 +20,10 @@ export function makeView(canvas, scene, dims) {
       return { eye: [cx, cy, dist], f: [0, 0, -1], r: [1, 0, 0], u: [0, 1, 0], dist };
     }
     // Look from the side the box comes from (scene.viewFrom: angle in the floor plan, radians), raised.
-    const az = scene.viewFrom ?? -Math.PI / 2, el = mode === 'above' ? Math.PI / 2 - 1e-3 : 0.95;
-    const dist = span * 2.6;
-    const eye = [cx + Math.cos(az) * Math.cos(el) * dist, cy + Math.sin(az) * Math.cos(el) * dist, top * 0.35 + Math.sin(el) * dist];
-    const target = [cx, cy, mode === 'above' ? 0 : top * 0.2];
+    const az = scene.viewFrom ?? -Math.PI / 2, el = mode === 'above' ? Math.PI / 2 - 1e-3 : scene.viewEl ?? 0.95;
+    const dist = span * (scene.viewOrtho ? 50 : 2.6); // (far away: practically a side elevation)
+    const eye = [cx + Math.cos(az) * Math.cos(el) * dist, cy + Math.sin(az) * Math.cos(el) * dist, (scene.viewZ ?? top * 0.35) + Math.sin(el) * dist];
+    const target = [cx, cy, mode === 'above' ? 0 : scene.viewZ ?? top * 0.2];
     const f = norm(sub(target, eye)), r = norm(cross(f, [0, 0, 1])), u = cross(r, f);
     return { eye, f, r, u, dist };
   }
