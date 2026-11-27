@@ -5,6 +5,7 @@
 export function sofa({ L, D, H, seatH, backT, armH = 0, armW = 0 }) {
   if (!(seatH > 0 && seatH < H)) return { error: 'The seat height must be more than 0 and less than the overall height.' };
   if (!(backT > 0 && backT < D)) return { error: 'The backrest depth must be more than 0 and less than the overall depth.' };
+  if (armW > 0 && armH > 0 && armH <= seatH) return { error: 'The arm height must be above the seat height (or 0 for no arms).' };
   if (armW > 0 && armH > seatH && !(armH <= H && 2 * armW < L)) return { error: 'The arms must be no higher than the sofa and narrower than half its length.' };
   const zb = -H / 2;
   const parts = [

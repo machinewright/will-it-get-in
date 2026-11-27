@@ -12,6 +12,7 @@ const DEG = 180 / Math.PI;
 // dims: the item (a sofa shape has a front and a back: its backrest is at +y, its seat on the bottom, -z).
 export function posture(pose, dims = [1, 1, 1]) {
   const R = rotation(holdsFor(dims)[pose.hold], pose.yaw, pose.pitch), shape = !!dims.parts;
+  if (shape) return shapePosture(R);
   const up = [0, 1, 2].map((i) => Math.asin(Math.min(1, Math.abs(R[2][i]))) * DEG); // how far each side points up
   if (up[2] >= 81) return R[2][2] < 0 && shape ? { kind: 'upside', text: 'upside down' } : { kind: 'upright', text: 'upright, on its feet' };
   if (up[1] >= 81) return R[2][1] > 0 && shape ? { kind: 'front', text: 'on its front' } : { kind: 'back', text: 'on its back' };
@@ -26,6 +27,24 @@ export function posture(pose, dims = [1, 1, 1]) {
 }
 
 let dimsOf = [1, 1, 1]; // the item being described (set by describe)
+
+// For a sofa, start from which face is down (its feet, its back, its front, its top, an end), then say how far it's
+// lifted or tipped from there.
+function shapePosture(R) {
+  const z = [R[2][0], R[2][1], R[2][2]], up = z.map((v) => Math.asin(Math.min(1, Math.abs(v))) * DEG);
+  const i = up.indexOf(Math.max(...up)); // the side closest to vertical
+  const base = i === 0 ? 'end' : i === 1 ? (z[1] > 0 ? 'front' : 'back') : (z[2] > 0 ? 'upright' : 'upside');
+  const words = { end: 'standing on its end', front: 'on its front', back: 'on its back', upright: 'upright, on its feet', upside: 'upside down' };
+  const tilt = 90 - up[i];
+  if (tilt < 9) return { kind: base, text: words[base] };
+  if (base !== 'end' && up[0] >= 9) { // its length is lifted: one end up
+    const lift = Math.round(up[0] / 5) * 5, pre = { upright: 'with', back: 'on its back with', front: 'on its front with', upside: 'upside down with' }[base];
+    return { kind: 'lift' + base, lift, text: `${pre} one end lifted about ${lift}°` };
+  }
+  const t = Math.round(tilt / 5) * 5;
+  if (base === 'upright') return z[1] < 0 ? { kind: 'tip', tip: t, text: `tipped back about ${t}°` } : { kind: 'tipF', tip: t, text: `tipped forward about ${t}°` };
+  return { kind: 'tilt' + base, text: `${words[base]}, tilted about ${t}°` };
+}
 
 const sameKind = (p, q) => p.kind === q.kind || (p.kind.startsWith('lift') && q.kind.startsWith('lift'));
 
@@ -74,7 +93,9 @@ function enter(prev, a, b) {
   if (to.kind === 'back') return prev.post.kind.startsWith('lift') ? 'Lower it onto its back.' : 'Lay it on its back.';
   if (to.kind === 'front') return 'Lay it on its front.';
   if (to.kind === 'upside') return 'Turn it upside down.';
-  return `Tip it ${to.kind === 'tipF' ? 'forward' : 'back'} about ${to.tip}°.`;
+  if (to.kind === 'tip' || to.kind === 'tipF') return `Tip it ${to.kind === 'tipF' ? 'forward' : 'back'} about ${to.tip}°.`;
+  if (to.kind === 'end') return 'Stand it on its end.';
+  return `Now hold it ${to.text}.`;
 }
 
 // Is the raised end the one in front (in the direction it's moving)?

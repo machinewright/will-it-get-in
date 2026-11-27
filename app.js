@@ -134,7 +134,7 @@ function check() {
     if (m.id !== id) return;
     if (m.type === 'result') { clearInterval(timer); $('#go').disabled = false; showResult(m, shape ? sofa({ L: dims[0], D: dims[1], H: dims[2], ...shape }) : dims, kind, params); $('#status').textContent = m.found ? 'Now working out the longest that would get through…' : 'Now working out what would make it fit…'; }
     else if (m.type === 'wider') showWider(m, kind);
-    else if (m.type === 'longest') { clearInterval(timer); $('#status').textContent = ''; showLongest(m, dims); }
+    else if (m.type === 'longest') { clearInterval(timer); $('#status').textContent = ''; showLongest(m, dims, !!shape); }
     else if (m.type === 'error') { clearInterval(timer); $('#go').disabled = false; $('#status').textContent = 'Something went wrong: ' + m.message; }
   };
   worker.postMessage({ id, dims, kind, params, shape });
@@ -176,12 +176,14 @@ function showWider(m, kind) {
   $('#wider').innerHTML = `It would get through with ${what}.`;
 }
 
-function showLongest(m, dims) {
+function showLongest(m, dims, isSofa) {
   const what = `with this depth (${fmt(dims[1])}) and height (${fmt(dims[2])})`;
   let t;
-  if (m.value) t = `A box ${what} gets through here up to <b>${fmt(m.value)}</b> long. (I found a way at that length, and none a centimetre longer.)`;
-  else if (m.atLeast) t = `Length isn't what limits it here: a box ${what} got through at every length I tried, up to ${fmt(m.atLeast)}.`;
-  else if (m.between) t = `A box ${what} gets through here up to at least ${fmt(m.between[0])} long; I couldn't settle lengths between that and ${fmt(m.between[1])} (the search got too big).`;
+  if (m.value) t = isSofa
+    ? `A sofa of this shape (${what.replace('with ', 'same ')}, seat, back and arms) gets through here at <b>${fmt(m.value)}</b> long; at a centimetre longer I found no way. (Its arms sit at its ends, so a shorter sofa isn't simply a part of a longer one: check other lengths on their own.)`
+    : `A box ${what} gets through here up to <b>${fmt(m.value)}</b> long. (I found a way at that length, and none a centimetre longer.)`;
+  else if (m.atLeast) t = `Length isn't what limits it here: ${isSofa ? 'one' : 'a box'} ${what} got through at every length I tried, up to ${fmt(m.atLeast)}.`;
+  else if (m.between) t = `${isSofa ? 'A sofa' : 'A box'} ${what} gets through here up to at least ${fmt(m.between[0])} long; I couldn't settle lengths between that and ${fmt(m.between[1])} (the search got too big).`;
   else if (m.none || m.skip) t = '';
   else t = 'I couldn\'t work out the longest that would get through (the search got too big).';
   $('#longest').innerHTML = t; $('#longest').hidden = !t;

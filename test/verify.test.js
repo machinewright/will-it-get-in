@@ -253,3 +253,20 @@ test('sofa shapes: every way found in random scenes passes the independent check
   }
   assert.ok(found >= 4, `only ${found} of 12 sofa cases had a way`);
 });
+
+test('sofa postures are named from the face that is down (audit repros)', async () => {
+  const { posture } = await import('../src/describe.js');
+  const d = sofa({ L: 200, D: 90, H: 85, seatH: 45, backT: 20, armH: 62, armW: 15 });
+  const deg = Math.PI / 180;
+  // Hold 0 (length tilts, depth up, not flipped): backrest pointing up = lying on its front.
+  assert.match(posture({ hold: 0, yaw: 0.3, pitch: 25 * deg }, d).text, /on its front/);
+  // Hold 7 (length tilts, height axis flipped): upside down with an end lifted.
+  assert.match(posture({ hold: 7, yaw: 0, pitch: 25 * deg }, d).text, /upside down/);
+  // Hold 9 (depth tilts, height axis flipped): upside down, tilted, never "tipped forward/back".
+  for (const p of [25, -25]) assert.match(posture({ hold: 9, yaw: 0, pitch: p * deg }, d).text, /upside down/);
+  // ... and at 60 degrees from upside down it's nearer lying on its front or back: named that way.
+  assert.match(posture({ hold: 9, yaw: 0, pitch: 60 * deg }, d).text, /on its (front|back), tilted about 30/);
+  // Upright with the backrest lower: tipped back.
+  const t = posture({ hold: 3, yaw: 0, pitch: -30 * deg }, d).text + ' | ' + posture({ hold: 3, yaw: 0, pitch: 30 * deg }, d).text;
+  assert.match(t, /tipped back/); assert.match(t, /tipped forward/);
+});
