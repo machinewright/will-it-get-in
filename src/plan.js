@@ -433,9 +433,10 @@ export function solve(dims, scene, opts = {}) {
     if (seedKey.has(i0)) { // the way along the straight hallway to where the search proper started
       const { key, j } = seedKey.get(i0), chain = [];
       for (let k = key, r = 0; k >= 0; r -= cdj[k], k = cpar[k]) chain.push({ id: Math.floor(k / CW), i: k % CW, r });
-      // Place that way so that every pose on it is covered (as far along as allowed, but not past row j), then slide
-      // the last pose straight along the hallway to row j (clear: it's covered all the way).
-      let jA = j, ok = true;
+      // Place that way so that it starts where the plain search starts (deep in the hallway), or further back if
+      // that's needed for every pose on it to be covered and none past row j; then slide the last pose straight
+      // along the hallway to row j (clear: it's covered all the way).
+      let jA = Math.min(j, jRef - chain[chain.length - 1].r), ok = true;
       for (const c of chain) { const oo = ori(c.id); jA = Math.min(jA, Math.floor((cor.yEnd - m - oo.maxy - oo.offy - y0) / step) - c.r); }
       { // and with the first pose where the scene says it starts from (e.g. before the corner)
         const c = chain[chain.length - 1], oo = ori(c.id), xc = x0 + c.i * step + oo.offx;
