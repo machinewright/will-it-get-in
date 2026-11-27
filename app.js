@@ -31,7 +31,7 @@ const FIELDS = {
   stairs: [
     ['w', 'A', 'Stair width', 'wall to wall, or to the handrail', 85],
     ['n', 'B', 'Number of steps', 'up to the floor above', 13],
-    ['rise', 'C', 'Step height', 'one step, floor to floor ÷ steps', 20],
+    ['rise', 'C', 'Step height', 'one step (or floor to floor ÷ steps)', 20],
     ['going', 'D', 'Step depth', 'front edge to front edge', 22.5],
     ['headroom', 'E', 'Headroom', 'lowest point: straight up from a step edge', 200],
     ['hc', 'F', 'Ceiling height', 'downstairs and upstairs', 240],
