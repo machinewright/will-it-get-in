@@ -67,7 +67,7 @@ function load() {
 const save = () => { try { localStorage.setItem('will-it-get-in', JSON.stringify(state)); } catch { /* private mode */ } };
 const spotVal = (k, key) => state.spot[k]?.[key] ?? FIELDS[k].find((f) => f[0] === key)[4];
 // Round defaults for people measuring in inches (used while a field still holds its untouched cm default).
-const IN_DEFAULT = { L: 84, D: 36, H: 34, a: 40, b: 32, ceiling: 96, doorH: 80, t: 5, past: 40 };
+const IN_DEFAULT = { L: 84, D: 36, H: 34, a: 40, b: 32, ceiling: 96, doorH: 80, t: 5, past: 40, seatH: 18, backT: 8, armH: 25, armW: 6 };
 const CM_DEFAULT = { L: 200, D: 90, H: 85 };
 function shown(key, cm, isDefault) { return state.unit === 'in' && isDefault && key in IN_DEFAULT ? IN_DEFAULT[key] : show(cm); }
 
@@ -76,7 +76,7 @@ function renderForm() {
   $('#unit').value = state.unit;
   for (const id of ['L', 'D', 'H']) $('#' + id).value = shown(id, state[id], state[id] === CM_DEFAULT[id]);
   $('#isSofa').checked = !!state.isSofa; $('#sofaFields').hidden = !state.isSofa;
-  for (const k of SHAPE_KEYS) $('#' + k).value = show(state.shape?.[k] ?? DEFAULT.shape[k]);
+  for (const k of SHAPE_KEYS) { const v = state.shape?.[k] ?? DEFAULT.shape[k]; $('#' + k).value = shown(k, v, v === DEFAULT.shape[k]); }
   document.querySelectorAll('input[name=kind]').forEach((r) => { r.checked = r.value === state.kind; });
   $('#spotFields').innerHTML = FIELDS[state.kind].map(([key, letter, label, hint]) =>
     `<label><span><b class="tag">${letter}</b> ${label}</span><span class="hint">${hint}</span><input id="f-${key}" data-key="${key}" type="number" inputmode="decimal" min="${key === 'past' ? 0 : 1}" step="any" required value="${shown(key, spotVal(state.kind, key), state.spot[state.kind]?.[key] === undefined)}"></label>`).join('');
@@ -261,7 +261,7 @@ const DIAGRAM = {
     <path d="M30 170 V20 H310 V90 H100 V170 Z" fill="#fff"/>
     ${arrow(32, 140, 98, 140)}${tag(65, 125, 'A')}${arrow(250, 22, 250, 88)}${tag(268, 55, 'B')}
     <text x="40" y="60" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">C: ceiling height</text>
-    <path d="M65 168 v-18" stroke="#2f6aa8" stroke-width="2.5" marker-end="url(#ahb)"/><text x="72" y="166" style="${T}; font-weight:400; font-size:12px; fill:#2f6aa8">you come in</text>`,
+    <path d="M65 168 v-18" stroke="#2f6aa8" stroke-width="2.5" marker-end="url(#ahb)"/><text x="125" y="166" style="${T}; font-weight:400; font-size:12px; fill:#2f6aa8">← you come in</text>`,
   sideDoor: `${DEFS}<rect x="40" y="0" width="10" height="170" fill="${W}"/><rect x="130" y="0" width="16" height="70" fill="${W}"/><rect x="130" y="130" width="16" height="40" fill="${W}"/>
     <rect x="50" y="0" width="80" height="170" fill="#fff"/><rect x="146" y="20" width="160" height="150" fill="#fff"/>
     <rect x="40" y="0" width="106" height="8" fill="${W}"/>
