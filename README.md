@@ -11,7 +11,7 @@ one with the same depth and height that would.
 - The furniture is a box; walls are vertical, a door has a header, and there is one ceiling height. Because walls
   are vertical, a box is clear of a wall exactly when the part of it above the wall's bottom, seen from above,
   misses the wall's footprint: every collision test is a 2D separating-axis test (`src/geom.js`).
-- `src/plan.js` searches poses (position, turn, tilt of one axis, which way up) on a 2.5 cm / 2.5° grid, A*
+- `src/plan.js` searches poses (position, turn, tilt of one axis, which way up) on a 5 cm / 5° grid and, if that finds nothing, a 2.5 cm / 2.5° grid, A*
   towards the goal. Each grid is shifted per orientation so the box can press exactly against the walls and door
   jamb that the tightest moves lean on. Every move is checked at points close enough that no point of the box
   travels more than 1 cm between them, against walls grown by 1.5 cm, so a found way keeps at least 1 cm clear

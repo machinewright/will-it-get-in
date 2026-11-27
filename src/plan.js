@@ -172,6 +172,15 @@ export function solve(dims, scene, opts = {}) {
     return { found: false, explored: 0, seeds: 0, capped: false, path: null, doorTooSmall: true };
   }
 
+  // How far a pose must back off along -x to be entirely in front of the doorway's wall, and whether that straight
+  // move is clear (checked like any other move: nothing travels more than 2 x slack between checks).
+  const backOff = (id, pos) => X(id, pos) + ori(id).maxx - scene.opening.x + 0.01;
+  function approachClear(id, pos) {
+    const dist = backOff(id, pos), k = Math.ceil(dist / (2 * slack)), oo = ori(id);
+    for (let i = 1; i <= k; i++) if (!clear(scene, oo, X(id, pos) - (i / k) * dist, Y(id, pos), m)) return false;
+    return true;
+  }
+
   if (scene.openStart) {
     // Open start: seeds are the poses just entering the doorway (the part past the wall's face must be within the
     // opening), every orientation it can enter in. Poses entirely in front of the wall are never expanded.
@@ -190,7 +199,8 @@ export function solve(dims, scene, opts = {}) {
           if (yc > yb) break;
           const pos = posAt[i + j * GW];
           if (pos < 0 || isSeen(id, pos)) continue;
-          if (free(id, pos)) push(id, pos, -1, reach * ((id % NP) * dPitch + (HOLDS[Math.floor(id / (NP * NY))].v === 2 ? 0 : Math.PI / 2)));
+          // The approach from the open room (straight in along x, from fully in front of the wall) is checked too.
+          if (free(id, pos) && approachClear(id, pos)) push(id, pos, -1, reach * ((id % NP) * dPitch + (HOLDS[Math.floor(id / (NP * NY))].v === 2 ? 0 : Math.PI / 2)));
         }
       }
     }
@@ -262,6 +272,10 @@ export function solve(dims, scene, opts = {}) {
       path.push({ x: X(qo[i], qp[i]), y: Y(qo[i], qp[i]), hold: a.h, yaw: a.yaw, pitch: a.pitch });
     }
     result.path = path.reverse();
+    if (scene.openStart) { // begin from the checked approach: entirely in front of the wall
+      const i0 = (() => { let i = found; while (par[i] >= 0) i = par[i]; return i; })();
+      result.path.unshift({ ...result.path[0], x: result.path[0].x - backOff(qo[i0], qp[i0]) });
+    }
     // How to get it from upright into the pose it goes in with, before it goes in (open space, same ceiling).
     const first = result.path[0], before = [];
     for (let k = first.hold * NP + Math.round(first.pitch / dPitch); k >= 0; k = fromHP[k]) before.push({ hold: Math.floor(k / NP), pitch: (k % NP) * dPitch });
@@ -307,3 +321,11 @@ export function smooth(dims, scene, path, opts = {}) {
   return out;
 }
 const sameHoldRun = (P, i, j) => { for (let k = i + 1; k <= j; k++) if (P[k].hold !== P[i].hold) return false; return true; };
+
+// Coarse grid first (5 cm, 5 degrees): a way found there is checked exactly like any other, so it's just as good,
+// and it's found several times faster. Only if that finds nothing, search the fine grid.
+export function solveTwoStage(dims, scene, opts = {}) {
+  const coarse = solve(dims, scene, { ...opts, step: 5, yawSteps: 72, pitchSteps: 18 });
+  if (coarse.found || coarse.doorTooSmall) return coarse;
+  return solve(dims, scene, opts);
+}

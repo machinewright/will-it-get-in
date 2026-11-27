@@ -166,7 +166,7 @@ function showLongest(m, dims) {
   const what = `with this depth (${fmt(dims[1])}) and height (${fmt(dims[2])})`;
   let t;
   if (m.value) t = `A box ${what} gets through here up to <b>${fmt(m.value)}</b> long. (I found a way at that length, and none a centimetre longer.)`;
-  else if (m.atLeast) t = `Anything ${what} gets through here up to at least <b>${fmt(m.atLeast)}</b> long.`;
+  else if (m.atLeast) t = `Length isn't what limits it here: a box ${what} got through at every length I tried, up to ${fmt(m.atLeast)}.`;
   else if (m.between) t = `A box ${what} gets through here up to at least ${fmt(m.between[0])} long; I couldn't settle lengths between that and ${fmt(m.between[1])} (the search got too big).`;
   else if (m.none || m.skip) t = '';
   else t = 'I couldn\'t work out the longest that would get through (the search got too big).';

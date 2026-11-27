@@ -1,6 +1,6 @@
 // Runs the search off the main thread.
 // In: { id, dims, kind, params }. Out: { id, type: 'result', ... } then { id, type: 'longest', ... }.
-import { solve, reachOf, smooth } from './src/plan.js';
+import { solveTwoStage as solve, reachOf, smooth } from './src/plan.js';
 import { corner, sideDoor, roomDoor } from './src/scene.js';
 import { describe } from './src/describe.js';
 
@@ -36,7 +36,7 @@ self.onmessage = (e) => {
     }
     // The longest box with the same depth and height that gets through (to the nearest cm), by halving.
     if (dims[0] < Math.max(dims[1], dims[2])) { self.postMessage({ id, type: 'longest', skip: true }); return; } // length isn't the longest side
-    const fits = (len) => { const d = [len, dims[1], dims[2]]; const q = solve(d, sceneFor(kind, params, d), SOLVE); return q.capped ? null : q.found; };
+    const fits = (len) => { const d = [len, dims[1], dims[2]]; const q = solve(d, sceneFor(kind, params, d), { maxStates: 2e6 }); return q.capped ? null : q.found; };
     const floor = Math.max(dims[1], dims[2]);
     let lo, hi;
     if (r.found) {

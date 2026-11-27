@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { solve, reachOf, smooth } from '../src/plan.js';
+import { solve, solveTwoStage, reachOf, smooth } from '../src/plan.js';
 import { describe } from '../src/describe.js';
 import { corner, sideDoor, roomDoor } from '../src/scene.js';
 import { HOLDS } from '../src/geom.js';
@@ -106,9 +106,7 @@ export function verifyPath(r, dims, scene, e = 0.6) {
       if (why2) return `between poses ${i - 1} and ${i}: ${why2}`;
     }
   }
-  // (With an open start the first pose is the box just entering the doorway: one grid step back it is in the open.)
-  const e0 = extentOf(frame(P[0], dims));
-  if (!scene.start(scene.openStart ? { ...e0, minx: e0.minx - 4, maxx: e0.maxx - 4 } : e0)) return 'first pose is not in the start area';
+  if (!scene.start(extentOf(frame(P[0], dims)))) return 'first pose is not in the start area';
   if (!scene.goal(extentOf(frame(P.at(-1), dims)))) return 'last pose is not in the goal area';
   return null;
 }
@@ -194,6 +192,10 @@ test('every way found in random scenes passes the independent check', () => {
     found++;
     assert.equal(verifyPath(r, dims, scene), null, `case ${i}: ${dims} in ${scene.kind}`);
     assert.equal(verifyPath({ ...r, path: smooth(dims, scene, r.path) }, dims, scene), null, `case ${i} smoothed: ${dims} in ${scene.kind}`);
+    // The coarse-first search the page uses: its ways must pass too.
+    const r2 = solveTwoStage(dims, scene);
+    assert.equal(r2.found, true, `case ${i}: two-stage search lost a way the fine search found`);
+    assert.equal(verifyPath({ ...r2, path: smooth(dims, scene, r2.path) }, dims, scene), null, `case ${i} two-stage: ${dims} in ${scene.kind}`);
   }
   assert.ok(found >= 8, `only ${found} of 24 random cases had a way: the check needs more`);
 });
