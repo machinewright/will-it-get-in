@@ -11,7 +11,7 @@
 // whole movement keeps at least `margin` from walls, door frame and ceiling.
 //
 // A straight hallway on the way in is searched once across rather than at every point along it (see scene.corridor
-// below): same answers, far fewer states.
+// below): far fewer states, and in the tests always the same answers.
 
 import { holdsFor, rotation, rotationInto, orient, clear, extent, liftOf, rampAt } from './geom.js';
 
@@ -249,7 +249,6 @@ export function solve(dims, scene, opts = {}) {
   // A pose entirely in the hallway, at least m from x1 and from yEnd, is then clear exactly when it is clear on a
   // reference row deep in the hallway, and so is every move between two such poses that is clear there. Those
   // poses are "covered" once (orientation, sideways position) is reached on the reference row, whatever the row.
-  // The reference row must be clear of the scene's edge (with a row to spare either side).
   let cor = scene.corridor && o.corridor !== false && !scene.openStart ? scene.corridor : null;
   // Checks there are made against the plain hallway alone (its two walls, endless, under its ceiling), so the
   // reference row can be any row of the grid in the hallway.
@@ -294,8 +293,8 @@ export function solve(dims, scene, opts = {}) {
     // can be reached doesn't depend on how far along it the item is, so they are found once, on a single row deep
     // in it (a move to the row before or after is checked there, and is the same anywhere along it). Then the
     // search proper starts from each of those, slid straight up until it first reaches past the straight part
-    // (each such move checked as usual). Same answers as searching the whole hallway, without repeating the same
-    // turns at every point along it.
+    // (each such move checked as usual). Meant to give the same answers as searching the whole hallway (and did, in
+    // the tests and a 615-case review), without repeating the same turns at every point along it.
     cpar = new Int32Array(NO * CW).fill(-2); cdj = new Int8Array(NO * CW);
     const cq = [];
     for (let id = 0; id < NO; id++) {
@@ -429,18 +428,20 @@ export function solve(dims, scene, opts = {}) {
       const i0 = (() => { let i = found; while (par[i] >= 0) i = par[i]; return i; })();
       result.path.unshift({ ...result.path[0], x: result.path[0].x - backOff(qo[i0], qp[i0]) });
     }
-    const i0 = (() => { let i = found; while (par[i] >= 0) i = par[i]; return i; })();
-    if (seedKey.has(i0)) { // the way along the straight hallway to where the search proper started
-      const { key, j } = seedKey.get(i0), chain = [];
+    const i1 = (() => { let i = found; while (par[i] >= 0) i = par[i]; return i; })();
+    if (seedKey.has(i1)) { // the way along the straight hallway to where the search proper started
+      const { key, j } = seedKey.get(i1), chain = [];
       for (let k = key, r = 0; k >= 0; r -= cdj[k], k = cpar[k]) chain.push({ id: Math.floor(k / CW), i: k % CW, r });
       // Place that way so that it starts where the plain search starts (deep in the hallway), or further back if
       // that's needed for every pose on it to be covered and none past row j; then slide the last pose straight
       // along the hallway to row j (clear: it's covered all the way).
-      let jA = Math.min(j, jRef - chain[chain.length - 1].r), ok = true;
+      let jA = Math.min(j, jRef - Math.min(...chain.map((c) => c.r))), ok = true; // (its furthest-back pose on jRef)
       for (const c of chain) { const oo = ori(c.id); jA = Math.min(jA, Math.floor((cor.yEnd - m - oo.maxy - oo.offy - y0) / step) - c.r); }
       { // and with the first pose where the scene says it starts from (e.g. before the corner)
         const c = chain[chain.length - 1], oo = ori(c.id), xc = x0 + c.i * step + oo.offx;
-        for (let t = 0; t < GH && !scene.start(extent(oo, xc, y0 + (jA + c.r) * step + oo.offy)); t++) jA--;
+        let t = 0;
+        for (; t < GH && !scene.start(extent(oo, xc, y0 + (jA + c.r) * step + oo.offy)); t++) jA--;
+        if (t === GH) ok = false;
       }
       const pose = (id, i, jj) => { const a = angles(id), oo = ori(id), x = x0 + i * step + oo.offx, y = y0 + jj * step + oo.offy;
         if (y + oo.miny < scene.bounds.y0 + m) ok = false; // (would run into the scene's edge: then search the plain way)
