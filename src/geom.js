@@ -8,28 +8,42 @@
 // The box's own axes: 0 = length, 1 = depth, 2 = height. A "hold" says which box axis tilts (lies along the carrying
 // direction when flat) and which one is vertical when flat. Tilting raises the front end by `pitch` radians.
 export const HOLDS = [];
-for (let a = 0; a < 3; a++) for (let v = 0; v < 3; v++) if (v !== a) HOLDS.push({ a, v, w: 3 - a - v });
+for (let a = 0; a < 3; a++) for (let v = 0; v < 3; v++) if (v !== a) HOLDS.push({ a, v, w: 3 - a - v, s: 1 });
+// A sofa isn't symmetric like a box (on its back is not on its front), so it also gets each hold turned over
+// (s = -1: rotated half a turn about the tilting axis, so the other face of v is up). Its shape must be symmetric
+// end to end (along its length), which a sofa with two equal arms is.
+export const SHAPE_HOLDS = [...HOLDS, ...HOLDS.map((h) => ({ ...h, s: -1 }))];
+export const holdsFor = (dims) => (dims.parts ? SHAPE_HOLDS : HOLDS);
 
 // Rotation matrix (row-major 3x3, columns = world directions of the box's length/depth/height axes).
 export const rotation = (hold, yaw, pitch) => rotationInto([[0, 0, 0], [0, 0, 0], [0, 0, 0]], hold, yaw, pitch);
 
-// Everything about an orientation that doesn't depend on where the box is.
-// dims = [length, depth, height]. The box rests with its lowest point on the floor.
+// Everything about an orientation that doesn't depend on where the item is.
+// dims = [length, depth, height] of its bounding box. The item is that box, or, if dims.parts is set, the union of
+// those boxes (each { c: centre offset, h: half sizes } in the bounding box's own axes, e.g. a sofa's seat block,
+// backrest and arms). It rests with its lowest point on the floor; positions are of the bounding box's centre.
 // Pass `out` (a previous result) to reuse its arrays: the search builds millions of in-between orientations.
+export const partsOf = (dims) => dims.parts ?? [{ c: [0, 0, 0], h: [dims[0] / 2, dims[1] / 2, dims[2] / 2] }];
+
 export function orient(dims, R, out) {
-  const o = out ?? { R: null, verts: new Float64Array(24), axes: new Float64Array(16), nax: 0, top: 0, minx: 0, maxx: 0, miny: 0, maxy: 0 };
+  const parts = partsOf(dims), np = parts.length;
+  const o = out ?? { R: null, np, verts: new Float64Array(24 * np), axes: new Float64Array(16), nax: 0, top: 0, minx: 0, maxx: 0, miny: 0, maxy: 0 };
   o.R = R;
-  const h0 = dims[0] / 2, h1 = dims[1] / 2, h2 = dims[2] / 2;
-  const zc = Math.abs(R[2][0]) * h0 + Math.abs(R[2][1]) * h1 + Math.abs(R[2][2]) * h2; // centre height
-  const verts = o.verts; // x, y, z offsets from the centre's floor point, z measured from the floor
-  let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
-  for (let i = 0; i < 8; i++) {
-    const a = i & 1 ? h0 : -h0, b = i & 2 ? h1 : -h1, c = i & 4 ? h2 : -h2;
-    const x = R[0][0] * a + R[0][1] * b + R[0][2] * c, y = R[1][0] * a + R[1][1] * b + R[1][2] * c;
-    verts[3 * i] = x; verts[3 * i + 1] = y; verts[3 * i + 2] = R[2][0] * a + R[2][1] * b + R[2][2] * c + zc;
-    if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
+  const verts = o.verts; // x, y, z offsets from the centre's floor point; z is made relative to the floor below
+  let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity, minz = Infinity, maxz = -Infinity;
+  for (let q = 0; q < np; q++) {
+    const { c, h } = parts[q];
+    for (let i = 0; i < 8; i++) {
+      const a = c[0] + (i & 1 ? h[0] : -h[0]), b = c[1] + (i & 2 ? h[1] : -h[1]), cc = c[2] + (i & 4 ? h[2] : -h[2]);
+      const x = R[0][0] * a + R[0][1] * b + R[0][2] * cc, y = R[1][0] * a + R[1][1] * b + R[1][2] * cc, z = R[2][0] * a + R[2][1] * b + R[2][2] * cc;
+      const k = 24 * q + 3 * i;
+      verts[k] = x; verts[k + 1] = y; verts[k + 2] = z;
+      if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y; if (z < minz) minz = z; if (z > maxz) maxz = z;
+    }
   }
-  // Candidate separating axes on the floor plan: x, y, each box axis's floor direction and its normal.
+  for (let k = 2; k < 24 * np; k += 3) verts[k] -= minz; // lowest point on the floor
+  // Candidate separating axes on the floor plan: x, y, each box axis's floor direction and its normal (every part
+  // is aligned with the same axes, so these serve them all).
   const axes = o.axes;
   axes[0] = 1; axes[1] = 0; axes[2] = 0; axes[3] = 1;
   let k = 4;
@@ -38,7 +52,7 @@ export function orient(dims, R, out) {
     if (n < 1e-9) continue;
     axes[k++] = ax / n; axes[k++] = ay / n; axes[k++] = -ay / n; axes[k++] = ax / n;
   }
-  o.nax = k; o.top = 2 * zc; o.minx = minx; o.maxx = maxx; o.miny = miny; o.maxy = maxy;
+  o.nax = k; o.top = maxz - minz; o.minx = minx; o.maxx = maxx; o.miny = miny; o.maxy = maxy;
   return o;
 }
 
@@ -46,8 +60,9 @@ export function orient(dims, R, out) {
 export function rotationInto(R, hold, yaw, pitch) {
   const cp = Math.cos(pitch), sp = Math.sin(pitch), cy = Math.cos(yaw), sy = Math.sin(yaw);
   R[0][hold.a] = cp * cy; R[1][hold.a] = cp * sy; R[2][hold.a] = sp;   // tilting axis: along the yaw, raised by pitch
-  R[0][hold.w] = -sy; R[1][hold.w] = cy; R[2][hold.w] = 0;             // the other lying axis: stays level
-  R[0][hold.v] = -sp * cy; R[1][hold.v] = -sp * sy; R[2][hold.v] = cp; // the upright axis: leans back as it tilts
+  const s = hold.s ?? 1;
+  R[0][hold.w] = -sy * s; R[1][hold.w] = cy * s; R[2][hold.w] = 0;                 // the other lying axis: stays level
+  R[0][hold.v] = -sp * cy * s; R[1][hold.v] = -sp * sy * s; R[2][hold.v] = cp * s; // the upright axis: leans back as it tilts
   return R;
 }
 
@@ -58,8 +73,8 @@ for (let i = 0; i < 8; i++) for (const b of [1, 2, 4]) if (!(i & b)) EDGES.push(
 const pts = new Float64Array(64); // scratch: floor-plan points of the clipped box
 
 // Floor-plan points of the part of the box at or above height z0 (offsets from the centre). Returns the count.
-function clipAbove(o, z0) {
-  const v = o.verts;
+function clipAbove(o, z0, q) {
+  const v = o.verts.subarray(24 * q, 24 * q + 24);
   if (z0 <= 0) { for (let i = 0; i < 8; i++) { pts[2 * i] = v[3 * i]; pts[2 * i + 1] = v[3 * i + 1]; } return 8; }
   let n = 0;
   for (let i = 0; i < 8; i++) if (v[3 * i + 2] >= z0) { pts[2 * n] = v[3 * i]; pts[2 * n + 1] = v[3 * i + 1]; n++; }
@@ -84,19 +99,21 @@ export function clear(scene, o, x, y, m) {
     const x0 = b.x0 - m - x, x1 = b.x1 + m - x, y0 = b.y0 - m - y, y1 = b.y1 + m - y; // block relative to the centre
     // Quick reject with the box's own bounding rectangle.
     if (o.maxx <= x0 || o.minx >= x1 || o.maxy <= y0 || o.miny >= y1) continue;
-    const n = clipAbove(o, b.zb - m);
-    if (n === 0) continue;
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, hx = (x1 - x0) / 2, hy = (y1 - y0) / 2;
-    let separated = false;
-    const ax = o.axes, nax = o.nax;
-    for (let k = 0; k < nax && !separated; k += 2) {
-      const nx = ax[k], ny = ax[k + 1];
-      let lo = Infinity, hi = -Infinity;
-      for (let i = 0; i < n; i++) { const p = pts[2 * i] * nx + pts[2 * i + 1] * ny; if (p < lo) lo = p; if (p > hi) hi = p; }
-      const c = cx * nx + cy * ny, r = hx * Math.abs(nx) + hy * Math.abs(ny);
-      if (hi <= c - r || lo >= c + r) separated = true;
+    for (let q = 0; q < o.np; q++) { // each part on its own: the item is clear iff every part is
+      const n = clipAbove(o, b.zb - m, q);
+      if (n === 0) continue;
+      let separated = false;
+      const ax = o.axes, nax = o.nax;
+      for (let k = 0; k < nax && !separated; k += 2) {
+        const nx = ax[k], ny = ax[k + 1];
+        let lo = Infinity, hi = -Infinity;
+        for (let i = 0; i < n; i++) { const p = pts[2 * i] * nx + pts[2 * i + 1] * ny; if (p < lo) lo = p; if (p > hi) hi = p; }
+        const c = cx * nx + cy * ny, r = hx * Math.abs(nx) + hy * Math.abs(ny);
+        if (hi <= c - r || lo >= c + r) separated = true;
+      }
+      if (!separated) return false;
     }
-    if (!separated) return false;
   }
   return true;
 }

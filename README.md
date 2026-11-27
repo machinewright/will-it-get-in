@@ -18,7 +18,14 @@ one with the same depth and height that would.
   throughout (assuming the box can be brought to its first pose: straight along the hallway, from open space). Open rooms count as a single start (anything can be turned there); the box may only start in
   orientations it can be tipped into under the ceiling from resting on any side, tilting one axis at a time (the
   height then peaks at the diagonal, so this is computed exactly).
-- A door is impossible (with the 1 cm clearance), without searching, when the box's shortest side is wider than the opening less the
+- Optional sofa shape (`src/shape.js`): seat block + backrest + two equal arms, as boxes; the item is clear iff every
+  part is. Shapes get the flipped holds too (on its back is not on its front) and tilts both ways; the shape must
+  be symmetric end to end.
+- Doors: first, straight through. Translating along x, every point crosses the doorway at fixed (y, z), so it
+  passes exactly when its silhouette on the wall plane fits the opening (checked over turns and 0.25° tilts it can
+  be tipped into under the ceiling; off a hallway it must also fit the hallway's width). Tested against an
+  independent 2D "narrowest profile" computation.
+- A box (not a shape) at a door is impossible (with the 1 cm clearance), without searching, when the box's shortest side is wider than the opening less the
   clearance (the line through the box's centre across the doorway is at least that long).
 - Tests (`node --test test/`): carrying a box flat round a corner has an exact answer (push it into the outside
   corner at every angle; reproduces the textbook ladder formula); the search agrees with it to within 1 cm on 11

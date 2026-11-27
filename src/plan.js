@@ -10,7 +10,7 @@
 // between them. So at every moment in between, every point of the box is within d of a checked position, and the
 // whole movement keeps at least `margin` from walls, door frame and ceiling.
 
-import { HOLDS, rotation, rotationInto, orient, clear, extent } from './geom.js';
+import { holdsFor, rotation, rotationInto, orient, clear, extent } from './geom.js';
 
 export const DEFAULTS = { greed: 2, step: 2.5, yawSteps: 144, pitchSteps: 36, margin: 1, slack: 0.5, maxStates: 6e6 };
 
@@ -19,7 +19,9 @@ export function reachOf(dims) { return Math.hypot(dims[0], dims[1], dims[2]) / 2
 export function solve(dims, scene, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const { step, yawSteps: NY, pitchSteps, margin, slack } = o;
-  const NP = pitchSteps + 1; // pitch 0 .. 90 degrees inclusive
+  const HOLDS = holdsFor(dims), shape = !!dims.parts;
+  // Pitch 0 .. 90 degrees for a box (raising either end is the same by symmetry); -90 .. 90 for a shape.
+  const NP = (shape ? 2 : 1) * pitchSteps + 1, P0 = shape ? pitchSteps : 0;
   const NH = HOLDS.length;
   const m = margin + slack;
   const reach = reachOf(dims);
@@ -40,7 +42,7 @@ export function solve(dims, scene, opts = {}) {
   const NO = NH * NY * NP;
   const oris = new Array(NO);
   const ori = (id) => oris[id] ?? (oris[id] = orientAt(id));
-  function angles(id) { const p = id % NP, y = ((id - p) / NP) % NY, h = Math.floor(id / (NP * NY)); return { h, yaw: y * dYaw, pitch: p * dPitch }; }
+  function angles(id) { const p = id % NP, y = ((id - p) / NP) % NY, h = Math.floor(id / (NP * NY)); return { h, yaw: y * dYaw, pitch: (p - P0) * dPitch }; }
   // Each orientation gets its own copy of the position grid, shifted so that the box's left edge and far edge land
   // exactly `m` from the scene's snap walls. Then the box can be pressed against those walls at any angle, which is
   // what the tightest ways round need; a fixed grid of centre points would keep it up to a step away.
@@ -58,11 +60,11 @@ export function solve(dims, scene, opts = {}) {
 
   // Hold changes: same orientation reached through two holds (flat: pitch 0; on end: pitch 90).
   const same = new Map(); // oid -> [oid...]
-  for (const p of [0, NP - 1]) {
+  for (const p of new Set([0, P0, NP - 1])) {
     const keyOf = new Map();
     for (let h = 0; h < NH; h++) for (let y = 0; y < NY; y++) {
       const id = oid(h, y, p), v = ori(id).verts, ks = [];
-      for (let i = 0; i < 8; i++) ks.push(`${Math.round(v[3 * i] * 1e3)},${Math.round(v[3 * i + 1] * 1e3)},${Math.round(v[3 * i + 2] * 1e3)}`);
+      for (let i = 0; i < v.length / 3; i++) ks.push(`${Math.round(v[3 * i] * 1e3)},${Math.round(v[3 * i + 1] * 1e3)},${Math.round(v[3 * i + 2] * 1e3)}`);
       const key = ks.sort().join(';');
       if (!keyOf.has(key)) keyOf.set(key, []);
       keyOf.get(key).push(id);
@@ -147,19 +149,20 @@ export function solve(dims, scene, opts = {}) {
   // which peaks at the diagonal sqrt(dims[a]^2 + dims[v]^2) when tan p = dims[a] / dims[v]: so a tilt from p0 to
   // p1 fits exactly when that height stays under the ceiling over the whole range.
   const limit = scene.ceiling - m;
+  // (For a shape these are its bounding box's sizes: it is no taller than that, so this never allows too much.)
   const tallest = (hd, p0, p1) => {
-    const A = dims[hd.a], V = dims[hd.v], peak = Math.atan2(A, V);
+    const A = dims[hd.a], V = dims[hd.v], peak = Math.atan2(A, V), f = (p) => A * Math.abs(Math.sin(p)) + V * Math.cos(p);
     const lo = Math.min(p0, p1), hi = Math.max(p0, p1);
-    return peak > lo && peak < hi ? Math.hypot(A, V) : Math.max(A * Math.sin(lo) + V * Math.cos(lo), A * Math.sin(hi) + V * Math.cos(hi));
+    return (peak > lo && peak < hi) || (-peak > lo && -peak < hi) ? Math.hypot(A, V) : Math.max(f(lo), f(hi));
   };
   const enterHP = new Uint8Array(NH * NP), fromHP = new Int32Array(NH * NP).fill(-1), todo = []; // by hold and pitch
   // It can arrive resting on any side (upright, on its back, on its end...), if that fits under the ceiling.
-  for (let h = 0; h < NH; h++) if (dims[HOLDS[h].v] <= limit) { enterHP[h * NP] = 1; todo.push(h * NP); }
+  for (let h = 0; h < NH; h++) if (dims[HOLDS[h].v] <= limit) { enterHP[h * NP + P0] = 1; todo.push(h * NP + P0); }
   for (let qi = 0; qi < todo.length; qi++) {
     const k = todo[qi], h = Math.floor(k / NP), p = k % NP;
     const next = [];
-    for (const q of [p - 1, p + 1]) if (q >= 0 && q < NP && tallest(HOLDS[h], p * dPitch, q * dPitch) <= limit) next.push(h * NP + q);
-    if (p === 0 || p === NP - 1) for (const j of same.get(oid(h, 0, p)) ?? []) next.push(Math.floor(j / (NP * NY)) * NP + p);
+    for (const q of [p - 1, p + 1]) if (q >= 0 && q < NP && tallest(HOLDS[h], (p - P0) * dPitch, (q - P0) * dPitch) <= limit) next.push(h * NP + q);
+    if (p === 0 || p === P0 || p === NP - 1) for (const j of same.get(oid(h, 0, p)) ?? []) next.push(Math.floor(j / (NP * NY)) * NP + p);
     for (const j of next) if (!enterHP[j]) { enterHP[j] = 1; fromHP[j] = k; todo.push(j); }
   }
   const enter = (id) => enterHP[Math.floor(id / (NP * NY)) * NP + (id % NP)] === 1;
@@ -168,7 +171,7 @@ export function solve(dims, scene, opts = {}) {
   // plane, and the line through the centre across the doorway then lies in the opening. Every line through a box's
   // centre, between two faces, is at least as long as the box's smallest side. So if the smallest side is wider
   // than the opening (less the clearance on both sides), no way exists, and there's no need to search.
-  if (scene.door && Math.min(...dims) > scene.door.width - 2 * margin) {
+  if (scene.door && !shape && Math.min(...dims) > scene.door.width - 2 * margin) { // (boxes only: needs convexity)
     return { found: false, explored: 0, seeds: 0, capped: false, path: null, doorTooSmall: true };
   }
 
@@ -181,6 +184,56 @@ export function solve(dims, scene, opts = {}) {
     return true;
   }
 
+  // Starting tilted, on its side or upside down costs the tipping it took, so the easiest way wins.
+  function tipCost(id) {
+    const hd = HOLDS[Math.floor(id / (NP * NY))], tilt = Math.abs((id % NP) - P0) * dPitch;
+    return reach * (tilt + (hd.v === 2 ? (hd.s === 1 ? 0 : Math.PI) : Math.PI / 2));
+  }
+
+  // Door between open rooms: try carrying it straight through first. Moving straight along x, every point of it
+  // crosses the doorway at its own fixed (y, z), so it gets through exactly when its silhouette on the wall's plane
+  // fits the opening (less the margin): all its corners within the opening's width, and under the door's height.
+  // Checked over a fine set of turns and tilts it could be tipped into from resting under this ceiling (one tilt);
+  // the move is then checked again like any other.
+  // Off a hallway, the same works if, held that way, it also fits the hallway's width to be walked up to the door.
+  if (scene.door && (scene.openStart || scene.hallway)) {
+    const st = straightThrough();
+    if (st) return st;
+  }
+  function straightThrough() {
+    const { width, height } = scene.door, oy0 = scene.opening.y0, wx = scene.opening.x, R = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    let best = null, o2;
+    for (let h = 0; h < NH; h++) {
+      const hd = HOLDS[h];
+      if (dims[hd.v] > limit) continue;
+      for (let pi = -360; pi <= 360; pi++) {
+        const pitch = pi * Math.PI / 720; // 0.25 degree steps
+        if (pitch < 0 && !shape) continue;
+        if (tallest(hd, 0, pitch) > limit) continue;
+        for (let yi = 0; yi < 24; yi++) {
+          const yaw = yi * Math.PI / 12;
+          o2 = orient(dims, rotationInto(R, hd, yaw, pitch), o2);
+          if (o2.top > height - m || o2.maxy - o2.miny > width - 2 * m) continue;
+          if (scene.hallway && o2.maxx - o2.minx > scene.hallway - 2 * m) continue;
+          const cost = Math.abs(pitch) + (hd.v === 2 ? (hd.s === 1 ? 0 : Math.PI) : Math.PI / 2);
+          if (!best || cost < best.cost) best = { cost, h, yaw, pitch, y: oy0 + width / 2 - (o2.maxy + o2.miny) / 2, minx: o2.minx, maxx: o2.maxx };
+        }
+      }
+    }
+    if (!best) return null;
+    const A = { x: wx - best.maxx - 0.01, y: best.y, hold: best.h, yaw: best.yaw, pitch: best.pitch };
+    const B = { ...A, x: wx + scene.door.depth - best.minx + 0.01 };
+    const path = [A, B];
+    if (scene.hallway) { // start deep in the hallway, centred, and walk up to the door first
+      A.x = scene.hallway / 2 - (best.minx + best.maxx) / 2;
+      path.unshift({ ...A, y: scene.seed.y });
+    }
+    for (let i = 1; i < path.length; i++) if (!straightClear(dims, scene, path[i - 1], path[i], opts)) return null; // (shouldn't happen)
+    const before = [{ hold: best.h, pitch: 0 }];
+    if (best.pitch !== 0) before.push({ hold: best.h, pitch: best.pitch });
+    return { found: true, explored: 0, seeds: 0, capped: false, path, before, straight: true };
+  }
+
   if (scene.openStart) {
     // Open start: seeds are the poses just entering the doorway (the part past the wall's face must be within the
     // opening), every orientation it can enter in. Poses entirely in front of the wall are never expanded.
@@ -189,7 +242,7 @@ export function solve(dims, scene, opts = {}) {
       if (!enter(id)) continue;
       const oo = ori(id), v = oo.verts;
       let lo = Infinity, hi = -Infinity; // y range of the leading corners
-      for (let k = 0; k < 8; k++) if (v[3 * k] >= oo.maxx - 1.5 * step) { lo = Math.min(lo, v[3 * k + 1]); hi = Math.max(hi, v[3 * k + 1]); }
+      for (let k = 0; k < v.length / 3; k++) if (v[3 * k] >= oo.maxx - 1.5 * step) { lo = Math.min(lo, v[3 * k + 1]); hi = Math.max(hi, v[3 * k + 1]); }
       for (let i = 0; i < GW; i++) {
         const xc = x0 + i * step + oo.offx;
         if (xc + oo.maxx <= wx || xc + oo.maxx > wx + 1.5 * step) continue;
@@ -200,7 +253,7 @@ export function solve(dims, scene, opts = {}) {
           const pos = posAt[i + j * GW];
           if (pos < 0 || isSeen(id, pos)) continue;
           // The approach from the open room (straight in along x, from fully in front of the wall) is checked too.
-          if (free(id, pos) && approachClear(id, pos)) push(id, pos, -1, reach * ((id % NP) * dPitch + (HOLDS[Math.floor(id / (NP * NY))].v === 2 ? 0 : Math.PI / 2)));
+          if (free(id, pos) && approachClear(id, pos)) push(id, pos, -1, tipCost(id));
         }
       }
     }
@@ -215,8 +268,7 @@ export function solve(dims, scene, opts = {}) {
       const pos = i >= 0 && i < GW ? posAt[i + jSeed * GW] : -1;
       if (pos < 0 || isSeen(id, pos)) continue;
       // Starting tilted or on its side costs the tipping it took, so the easiest way wins when there are several.
-      const pe = id % NP, he = Math.floor(id / (NP * NY)), tip = reach * (pe * dPitch + (HOLDS[he].v === 2 ? 0 : Math.PI / 2));
-      if (scene.start(extent(oo, X(id, pos), Y(id, pos))) && free(id, pos)) push(id, pos, -1, tip);
+      if (scene.start(extent(oo, X(id, pos), Y(id, pos))) && free(id, pos)) push(id, pos, -1, tipCost(id));
     }
   }
   }
@@ -278,7 +330,7 @@ export function solve(dims, scene, opts = {}) {
     }
     // How to get it from upright into the pose it goes in with, before it goes in (open space, same ceiling).
     const first = result.path[0], before = [];
-    for (let k = first.hold * NP + Math.round(first.pitch / dPitch); k >= 0; k = fromHP[k]) before.push({ hold: Math.floor(k / NP), pitch: (k % NP) * dPitch });
+    for (let k = first.hold * NP + Math.round(first.pitch / dPitch) + P0; k >= 0; k = fromHP[k]) before.push({ hold: Math.floor(k / NP), pitch: ((k % NP) - P0) * dPitch });
     result.before = before.reverse();
   }
   return result;
@@ -297,7 +349,7 @@ export function straightClear(dims, scene, A, B, opts = {}) {
   let o;
   for (let i = 0; i <= k; i++) {
     const t = i / k;
-    o = orient(dims, rotationInto(R, HOLDS[A.hold], A.yaw + t * dy, A.pitch + t * dp), o);
+    o = orient(dims, rotationInto(R, holdsFor(dims)[A.hold], A.yaw + t * dy, A.pitch + t * dp), o);
     if (!clear(scene, o, A.x + t * dx, A.y + t * dyy, m)) return false;
   }
   return true;

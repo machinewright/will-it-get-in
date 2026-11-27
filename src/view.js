@@ -1,7 +1,7 @@
 // Draws the scene and the box at a pose on a canvas: a simple perspective view (or straight down from above).
 // Walls are drawn see-through so the box stays visible; the box's shadow on the floor shows where it is.
 
-import { HOLDS, rotation, orient } from './geom.js';
+import { holdsFor, rotation, orient } from './geom.js';
 
 export function makeView(canvas, scene, dims) {
   const ctx = canvas.getContext('2d');
@@ -40,12 +40,14 @@ export function makeView(canvas, scene, dims) {
   }
 
   function boxFaces(pose) {
-    const o = orient(dims, rotation(HOLDS[pose.hold], pose.yaw, pose.pitch));
+    const o = orient(dims, rotation(holdsFor(dims)[pose.hold], pose.yaw, pose.pitch));
     const V = [];
-    for (let i = 0; i < 8; i++) V.push([pose.x + o.verts[3 * i], pose.y + o.verts[3 * i + 1], o.verts[3 * i + 2]]);
-    // Vertices are indexed by bits (1: +length, 2: +depth, 4: +height).
+    for (let i = 0; i < o.verts.length / 3; i++) V.push([pose.x + o.verts[3 * i], pose.y + o.verts[3 * i + 1], o.verts[3 * i + 2]]);
+    // Each part's vertices are indexed by bits (1: +length, 2: +depth, 4: +height).
     const F = [[0, 2, 6, 4], [1, 5, 7, 3], [0, 4, 5, 1], [2, 3, 7, 6], [0, 1, 3, 2], [4, 6, 7, 5]];
-    return { faces: F.map((f) => f.map((i) => V[i])), V };
+    const faces = [];
+    for (let q = 0; q < V.length / 8; q++) for (const f of F) faces.push(f.map((i) => V[8 * q + i]));
+    return { faces, V };
   }
 
   function draw(pose) {

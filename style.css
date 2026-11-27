@@ -75,3 +75,7 @@ button:disabled { opacity: .55; cursor: progress; }
 }
 .tag { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--ink); color: #fff; font: 600 12px/1 var(--sans); margin-right: 3px; vertical-align: 1px; }
 .longest:empty { display: none; }
+.check { display: flex; gap: 8px; align-items: center; margin: 14px 0 4px; font-weight: 550; cursor: pointer; }
+#sofaFields { margin-top: 10px; }
+#sofaFields .grid3.items { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 560px) { #sofaFields .grid3.items { grid-template-columns: 1fr 1fr; } }

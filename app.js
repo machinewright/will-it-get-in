@@ -1,6 +1,7 @@
 import { corner, sideDoor, roomDoor } from './src/scene.js';
 import { reachOf } from './src/plan.js';
 import { makeView } from './src/view.js';
+import { sofa } from './src/shape.js';
 
 const $ = (s) => document.querySelector(s);
 const BUILD = { corner, sideDoor, roomDoor };
@@ -34,7 +35,8 @@ const NOTES = {
 };
 
 // ---- State, units ----
-const DEFAULT = { unit: 'cm', L: 200, D: 90, H: 85, kind: 'corner', spot: {} };
+const DEFAULT = { unit: 'cm', L: 200, D: 90, H: 85, kind: 'corner', spot: {}, isSofa: false, shape: { seatH: 45, backT: 20, armH: 62, armW: 15 } };
+const SHAPE_KEYS = ['seatH', 'backT', 'armH', 'armW'];
 let state = load();
 const IN = 2.54;
 const show = (cm) => (state.unit === 'in' ? +(cm / IN).toFixed(1) : +cm.toFixed(1));
@@ -46,6 +48,8 @@ function valid(s) {
   const pos = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0 && v < 5000;
   if (!s || typeof s !== 'object' || !(s.kind in FIELDS) || !['cm', 'in'].includes(s.unit ?? 'cm')) return false;
   if (![s.L ?? 1, s.D ?? 1, s.H ?? 1].every(pos)) return false;
+  if (s.isSofa !== undefined && typeof s.isSofa !== 'boolean') return false;
+  if (s.shape !== undefined && (typeof s.shape !== 'object' || s.shape === null || !Object.entries(s.shape).every(([k, v]) => SHAPE_KEYS.includes(k) && typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 5000))) return false;
   for (const [k, vals] of Object.entries(s.spot ?? {})) {
     if (!(k in FIELDS) || typeof vals !== 'object' || vals === null) return false;
     for (const [key, v] of Object.entries(vals)) if (!FIELDS[k].some((f) => f[0] === key) || !(pos(v) || (key === 'past' && v === 0))) return false;
@@ -71,6 +75,8 @@ function shown(key, cm, isDefault) { return state.unit === 'in' && isDefault && 
 function renderForm() {
   $('#unit').value = state.unit;
   for (const id of ['L', 'D', 'H']) $('#' + id).value = shown(id, state[id], state[id] === CM_DEFAULT[id]);
+  $('#isSofa').checked = !!state.isSofa; $('#sofaFields').hidden = !state.isSofa;
+  for (const k of SHAPE_KEYS) $('#' + k).value = show(state.shape?.[k] ?? DEFAULT.shape[k]);
   document.querySelectorAll('input[name=kind]').forEach((r) => { r.checked = r.value === state.kind; });
   $('#spotFields').innerHTML = FIELDS[state.kind].map(([key, letter, label, hint]) =>
     `<label><span><b class="tag">${letter}</b> ${label}</span><span class="hint">${hint}</span><input id="f-${key}" data-key="${key}" type="number" inputmode="decimal" min="${key === 'past' ? 0 : 1}" step="any" required value="${shown(key, spotVal(state.kind, key), state.spot[state.kind]?.[key] === undefined)}"></label>`).join('');
@@ -84,7 +90,12 @@ function readForm() {
   const dims = ['L', 'D', 'H'].map((id) => num($('#' + id)));
   const params = {};
   for (const el of document.querySelectorAll('#spotFields input')) params[el.dataset.key] = el.dataset.key === 'past' ? Math.max(0, toCm(parseFloat(el.value) || 0)) : num(el);
-  return { dims, params, errs };
+  let shape = null;
+  if (state.isSofa) {
+    shape = {};
+    for (const k of SHAPE_KEYS) { const el = $('#' + k), v = parseFloat(el.value); if (!(v >= 0) || (v === 0 && (k === 'seatH' || k === 'backT'))) errs.push(el); shape[k] = toCm(v); }
+  }
+  return { dims, params, errs, shape };
 }
 
 // Sizes are kept in cm, from what was typed (converted once); switching units only changes the display, so
@@ -93,9 +104,11 @@ document.querySelector('#form').addEventListener('input', (e) => {
   const el = e.target, v = parseFloat(el.value);
   if (!(v >= 0) || el.type !== 'number') return;
   if (['L', 'D', 'H'].includes(el.id)) state[el.id] = toCm(v);
+  else if (SHAPE_KEYS.includes(el.id)) state.shape = { ...DEFAULT.shape, ...state.shape, [el.id]: toCm(v) };
   else if (el.dataset.key) state.spot[state.kind] = { ...state.spot[state.kind], [el.dataset.key]: toCm(v) };
   save();
 });
+$('#isSofa').addEventListener('change', () => { state.isSofa = $('#isSofa').checked; $('#sofaFields').hidden = !state.isSofa; save(); });
 $('#unit').addEventListener('change', () => { state.unit = $('#unit').value; renderForm(); save(); });
 document.querySelectorAll('input[name=kind]').forEach((r) => r.addEventListener('change', () => { state.kind = r.value; renderForm(); save(); }));
 
@@ -104,7 +117,8 @@ let worker = null, runId = 0, timer = null;
 $('#form').addEventListener('submit', (e) => { e.preventDefault(); check(); });
 
 function check() {
-  const { dims, params, errs } = readForm();
+  const { dims, params, errs, shape } = readForm();
+  if (shape && !errs.length) { const t = sofa({ L: dims[0], D: dims[1], H: dims[2], ...shape }); if (t.error) { $('#status').textContent = t.error; return; } }
   for (const el of document.querySelectorAll('#form input[type=number]')) el.setAttribute('aria-invalid', errs.includes(el) ? 'true' : 'false');
   if (errs.length) { $('#status').textContent = 'Please fill in every size (numbers above zero).'; errs[0].focus(); return; }
   if (params.doorH && params.doorH > params.ceiling) params.doorH = params.ceiling;
@@ -118,19 +132,19 @@ function check() {
   worker.onmessage = (e) => {
     const m = e.data;
     if (m.id !== id) return;
-    if (m.type === 'result') { clearInterval(timer); $('#go').disabled = false; showResult(m, dims, kind, params); $('#status').textContent = m.found ? 'Now working out the longest that would get through…' : 'Now working out what would make it fit…'; }
+    if (m.type === 'result') { clearInterval(timer); $('#go').disabled = false; showResult(m, shape ? sofa({ L: dims[0], D: dims[1], H: dims[2], ...shape }) : dims, kind, params); $('#status').textContent = m.found ? 'Now working out the longest that would get through…' : 'Now working out what would make it fit…'; }
     else if (m.type === 'wider') showWider(m, kind);
     else if (m.type === 'longest') { clearInterval(timer); $('#status').textContent = ''; showLongest(m, dims); }
     else if (m.type === 'error') { clearInterval(timer); $('#go').disabled = false; $('#status').textContent = 'Something went wrong: ' + m.message; }
   };
-  worker.postMessage({ id, dims, kind, params });
+  worker.postMessage({ id, dims, kind, params, shape });
 }
 
 function showResult(m, dims, kind, params) {
   $('#out').hidden = false;
   const v = $('#verdict');
   $('#longest').textContent = ''; $('#wider').textContent = '';
-  $('#caveat').hidden = m.found;
+  $('#caveat').hidden = m.found || !!dims.parts;
   stop();
   if (m.found) {
     v.className = 'verdict good';
@@ -227,7 +241,7 @@ for (const [id, mode] of [['#vAngled', 'angled'], ['#vAbove', 'above']]) {
 addEventListener('resize', () => draw());
 
 $('#share').addEventListener('click', async () => {
-  const url = location.href.split('#')[0] + '#c=' + encodeURIComponent(JSON.stringify({ unit: state.unit, L: state.L, D: state.D, H: state.H, kind: state.kind, spot: { [state.kind]: state.spot[state.kind] } }));
+  const url = location.href.split('#')[0] + '#c=' + encodeURIComponent(JSON.stringify({ unit: state.unit, L: state.L, D: state.D, H: state.H, kind: state.kind, spot: { [state.kind]: state.spot[state.kind] }, isSofa: !!state.isSofa, shape: state.shape }));
   history.replaceState(null, '', url);
   try { await navigator.clipboard.writeText(url); $('#share').textContent = 'Link copied'; } catch { $('#share').textContent = 'Link is in the address bar'; }
   setTimeout(() => { $('#share').textContent = 'Copy a link to this check'; }, 2500);

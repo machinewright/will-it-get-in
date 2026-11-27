@@ -8,51 +8,55 @@ import assert from 'node:assert/strict';
 import { solve, solveTwoStage, reachOf, smooth } from '../src/plan.js';
 import { describe } from '../src/describe.js';
 import { corner, sideDoor, roomDoor } from '../src/scene.js';
-import { HOLDS } from '../src/geom.js';
+import { holdsFor } from '../src/geom.js';
+import { sofa } from '../src/shape.js';
 
 // Box axes in the world for a pose: the held axis points along the yaw, raised by the pitch; the upright axis
 // leans back by the same angle; the third stays level.
 function frame(pose, dims) {
-  const { a, v, w } = HOLDS[pose.hold], cp = Math.cos(pose.pitch), sp = Math.sin(pose.pitch);
+  const { a, v, w, s = 1 } = holdsFor(dims)[pose.hold], cp = Math.cos(pose.pitch), sp = Math.sin(pose.pitch);
   const cy = Math.cos(pose.yaw), sy = Math.sin(pose.yaw);
-  const ax = []; ax[a] = [cp * cy, cp * sy, sp]; ax[v] = [-sp * cy, -sp * sy, cp]; ax[w] = [-sy, cy, 0];
-  const half = dims.map((d) => d / 2);
-  // Lowest corner on the floor.
+  const ax = []; ax[a] = [cp * cy, cp * sy, sp]; ax[v] = [-sp * cy * s, -sp * sy * s, cp * s]; ax[w] = [-sy * s, cy * s, 0];
+  // The item's boxes (one, or a sofa's parts), each as its own frame: centre offset and half sizes.
+  const parts = dims.parts ?? [{ c: [0, 0, 0], h: dims.map((d) => d / 2) }];
+  const boxes = parts.map((pt) => ({ off: [0, 1, 2].map((r) => pt.c[0] * ax[0][r] + pt.c[1] * ax[1][r] + pt.c[2] * ax[2][r]), half: pt.h, ax }));
+  // Lowest corner of any part on the floor.
   let low = Infinity;
-  for (let i = 0; i < 8; i++) {
-    let z = 0;
-    for (let k = 0; k < 3; k++) z += ((i >> k) & 1 ? 1 : -1) * half[k] * ax[k][2];
+  for (const b of boxes) for (let i = 0; i < 8; i++) {
+    let z = b.off[2];
+    for (let k = 0; k < 3; k++) z += ((i >> k) & 1 ? 1 : -1) * b.half[k] * ax[k][2];
     low = Math.min(low, z);
   }
-  return { c: [pose.x, pose.y, -low], ax, half };
+  const c = [pose.x, pose.y, -low];
+  return { boxes: boxes.map((b) => ({ c: [c[0] + b.off[0], c[1] + b.off[1], c[2] + b.off[2]], ax, half: b.half })) };
 }
 
 function corners(f) {
   const out = [];
-  for (let i = 0; i < 8; i++) {
-    const p = [...f.c];
-    for (let k = 0; k < 3; k++) for (let r = 0; r < 3; r++) p[r] += ((i >> k) & 1 ? 1 : -1) * f.half[k] * f.ax[k][r];
+  for (const b of f.boxes) for (let i = 0; i < 8; i++) {
+    const p = [...b.c];
+    for (let k = 0; k < 3; k++) for (let r = 0; r < 3; r++) p[r] += ((i >> k) & 1 ? 1 : -1) * b.half[k] * b.ax[k][r];
     out.push(p);
   }
   return out;
 }
 
-// Points on the box's surface, about `gap` apart.
+// Points on the item's surface (each part's), about `gap` apart.
 function surface(f, gap) {
   const pts = [];
-  for (let k = 0; k < 3; k++) {
+  for (const b of f.boxes) for (let k = 0; k < 3; k++) {
     const k1 = (k + 1) % 3, k2 = (k + 2) % 3;
-    const n1 = Math.max(1, Math.ceil((2 * f.half[k1]) / gap)), n2 = Math.max(1, Math.ceil((2 * f.half[k2]) / gap));
+    const n1 = Math.max(1, Math.ceil((2 * b.half[k1]) / gap)), n2 = Math.max(1, Math.ceil((2 * b.half[k2]) / gap));
     for (const s of [-1, 1]) for (let i = 0; i <= n1; i++) for (let j = 0; j <= n2; j++) {
-      const u = -1 + (2 * i) / n1, t = -1 + (2 * j) / n2, p = [...f.c];
-      for (let r = 0; r < 3; r++) p[r] += s * f.half[k] * f.ax[k][r] + u * f.half[k1] * f.ax[k1][r] + t * f.half[k2] * f.ax[k2][r];
+      const u = -1 + (2 * i) / n1, t = -1 + (2 * j) / n2, p = [...b.c];
+      for (let r = 0; r < 3; r++) p[r] += s * b.half[k] * b.ax[k][r] + u * b.half[k1] * b.ax[k1][r] + t * b.half[k2] * b.ax[k2][r];
       pts.push(p);
     }
   }
   return pts;
 }
 
-const inBox = (f, p, e) => f.ax.every((u, k) => Math.abs((p[0] - f.c[0]) * u[0] + (p[1] - f.c[1]) * u[1] + (p[2] - f.c[2]) * u[2]) < f.half[k] + e);
+const inBox = (f, p, e) => f.boxes.some((b) => b.ax.every((u, k) => Math.abs((p[0] - b.c[0]) * u[0] + (p[1] - b.c[1]) * u[1] + (p[2] - b.c[2]) * u[2]) < b.half[k] + e));
 const inBlock = (b, p, e) => p[0] > b.x0 - e && p[0] < b.x1 + e && p[1] > b.y0 - e && p[1] < b.y1 + e && p[2] > b.zb - e;
 
 // Points along each block's edges that could poke into the box: its four vertical edges and, for a block that
@@ -198,4 +202,54 @@ test('every way found in random scenes passes the independent check', () => {
     assert.equal(verifyPath({ ...r2, path: smooth(dims, scene, r2.path) }, dims, scene), null, `case ${i} two-stage: ${dims} in ${scene.kind}`);
   }
   assert.ok(found >= 8, `only ${found} of 24 random cases had a way: the check needs more`);
+});
+
+// A sofa's end-on profile (seat block + backrest, no arms) and the narrowest it gets as it's turned about its
+// length: worked out in 2D from the profile's corners (the narrowest strip holding a convex polygon lies along
+// one of its edges), separately from the app's code.
+function narrowestProfile(D, H, seatH, backT) {
+  const P = [[0, 0], [D, 0], [D, H], [D - backT, H], [D - backT, seatH], [0, seatH]];
+  const hull = [[0, 0], [D, 0], [D, H], [D - backT, H], [0, seatH]]; // (D - backT, seatH) is inside
+  let best = Infinity;
+  for (let i = 0; i < hull.length; i++) {
+    const [x1, y1] = hull[i], [x2, y2] = hull[(i + 1) % hull.length], l = Math.hypot(x2 - x1, y2 - y1);
+    const nx = -(y2 - y1) / l, ny = (x2 - x1) / l;
+    const d = P.map(([x, y]) => (x - x1) * nx + (y - y1) * ny);
+    best = Math.min(best, Math.max(...d) - Math.min(...d));
+  }
+  return best;
+}
+
+test('a sofa through a door between rooms: straight through exactly when its profile, turned, fits', () => {
+  for (const [D, H, seatH, backT] of [[85, 78, 42, 16], [95, 85, 45, 20], [90, 80, 40, 18], [88, 82, 44, 22]]) {
+    const d = sofa({ L: 200, D, H, seatH, backT }), w = narrowestProfile(D, H, seatH, backT);
+    // A door that leaves 1.5 cm (the search's margin) plus 0.5 cm either side of the narrowest profile: it goes.
+    let scene = roomDoor({ b: w + 4, doorH: 200, t: 12, ceiling: 240, reach: reachOf(d) });
+    let r = solve(d, scene);
+    assert.equal(r.found, true, `${[D, H, seatH, backT]}: narrowest ${w.toFixed(1)}, door ${(w + 4).toFixed(1)}`);
+    assert.equal(verifyPath(r, d, scene), null);
+    // A door 1 cm narrower than the profile plus margins: not straight through (a search may still hook it round).
+    scene = roomDoor({ b: w + 2, doorH: 200, t: 12, ceiling: 240, reach: reachOf(d) });
+    r = solve(d, scene, { maxStates: 2e5 });
+    if (r.found) { assert.notEqual(r.straight, true, `${[D, H, seatH, backT]}: straight through a door too narrow`); assert.equal(verifyPath(r, d, scene), null); }
+  }
+});
+
+test('sofa shapes: every way found in random scenes passes the independent check', () => {
+  let seed = 23; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  let found = 0;
+  for (let i = 0; i < 12; i++) {
+    const L = 150 + Math.round(rnd() * 80), D = 75 + Math.round(rnd() * 25), H = 70 + Math.round(rnd() * 20);
+    const d = sofa({ L, D, H, seatH: 38 + Math.round(rnd() * 10), backT: 14 + Math.round(rnd() * 10), armH: rnd() < 0.5 ? 0 : 55 + Math.round(rnd() * 10), armW: 12 });
+    const ceiling = 220 + Math.round(rnd() * 40), reach = reachOf(d);
+    const scene = i % 3 === 0 ? corner({ a: 85 + Math.round(rnd() * 30), b: 85 + Math.round(rnd() * 30), ceiling, reach })
+      : i % 3 === 1 ? sideDoor({ a: 90 + Math.round(rnd() * 40), b: 75 + Math.round(rnd() * 20), doorH: 195 + Math.round(rnd() * 15), t: 10, past: 100, ceiling, reach })
+        : roomDoor({ b: 72 + Math.round(rnd() * 20), doorH: 195 + Math.round(rnd() * 15), t: 5 + Math.round(rnd() * 15), ceiling, reach });
+    const r = solveTwoStage(d, scene, { maxStates: 4e5 });
+    if (!r.found) continue;
+    found++;
+    assert.equal(verifyPath(r, d, scene), null, `sofa case ${i} in ${scene.kind}`);
+    assert.equal(verifyPath({ ...r, path: smooth(d, scene, r.path) }, d, scene), null, `sofa case ${i} smoothed in ${scene.kind}`);
+  }
+  assert.ok(found >= 4, `only ${found} of 12 sofa cases had a way`);
 });

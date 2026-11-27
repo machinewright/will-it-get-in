@@ -36,6 +36,18 @@ Anthropic) · November 2026 · <a href="#how">How it works</a> · <a href="https
     <label>Height <span class="hint">floor to top</span><input id="H" type="number" inputmode="decimal" min="10" step="any" required></label>
   </div>
   <p class="note">Use the outer size: the full box it would fit in, packaging included if it comes in a box.</p>
+  <label class="check"><input type="checkbox" id="isSofa"> It's a sofa: use its shape, not just its box</label>
+  <div id="sofaFields" hidden>
+    <div class="grid3 items" role="group" aria-label="The sofa's shape">
+      <label>Seat height <span class="hint">floor to top of the seat</span><input id="seatH" type="number" inputmode="decimal" min="1" step="any"></label>
+      <label>Backrest <span class="hint">how deep, front to back</span><input id="backT" type="number" inputmode="decimal" min="1" step="any"></label>
+      <label>Arm height <span class="hint">0 if no arms</span><input id="armH" type="number" inputmode="decimal" min="0" step="any"></label>
+      <label>Arm width <span class="hint">each arm, end to end</span><input id="armW" type="number" inputmode="decimal" min="0" step="any"></label>
+    </div>
+    <p class="note">It's treated as a solid seat block, a backrest along the back, and two equal arms; legs and cushions
+    as part of the blocks (take the legs off and you can subtract them from both heights). Corner sofas and chaises
+    aren't covered.</p>
+  </div>
 
   <h3 id="h-spot">The tight spot</h3>
   <div class="kinds" role="radiogroup" aria-labelledby="h-spot">
@@ -91,12 +103,20 @@ without searching, by a rule that is certain: at the moment the box's middle pas
 through its middle across the doorway is inside the opening, and every such line through a box is at least as long
 as its shortest side. So if the shortest side is wider than the doorway less a centimetre each side, no way of
 turning that box gets it through with that centimetre to spare.</p>
+<p>For a door it first tries carrying it straight through. Then every point of it crosses the doorway at the same
+height and the same distance from the door frame, so it gets through exactly when its outline, seen face-on to the
+wall, fits the opening (with the margin), for some way of turning and tipping it that the ceiling allows. That check
+is exact, and it's what movers mean by a sofa's "diagonal depth". Off a hallway it also needs to fit the hallway's
+width while you walk it up to the door. Only if that fails does it search.</p>
 <p>The "what would fit" lines come from the same search: a box that long, or a hallway or door that wide, is one it
 found a way for, and a centimetre more is one it didn't.</p>
 <p><strong>A real sofa isn't a box.</strong> If the box gets through, the sofa does too, since it fits inside the
-box. If the box doesn't, the sofa still might: arms and backs leave gaps that movers use (tilting the back through a
-door first, hooking an arm round the frame), and this tool can't see those. If the legs come off, enter the height
-without them.</p>
+box. If it doesn't, tick "It's a sofa" and give its seat height, the depth of its backrest and its arms: it then uses
+that shape (a seat block, a backrest along the back and two equal arms, all solid), which can go where its box
+can't, for example tipped back through a door narrower than the sofa is deep. The rule about the shortest side is
+for boxes only. It still can't see legs that come off (take them off and subtract them from the heights), soft
+cushions, rounded arms, or the gaps movers use under a raised seat, so a real sofa may still do a little better.
+Corner sofas and chaises aren't covered, and the search for a sofa shape can take longer.</p>
 <p>The code is <a href="https://github.com/machinewright/will-it-get-in">on GitHub</a>, with the tests: the search
 against the exact rule for flat carrying, and every way it finds checked again by separately written geometry.</p>
 </section>

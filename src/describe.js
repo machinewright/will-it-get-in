@@ -4,31 +4,36 @@
 // box with axis `a` tilted up by `pitch` from a resting position in which axis `v` is vertical; the third axis
 // stays level, so its direction (the yaw) measures turning without jumps.
 
-import { HOLDS, rotation } from './geom.js';
+import { holdsFor, rotation } from './geom.js';
 
 const DEG = 180 / Math.PI;
 
 // How the box is held: which of its sides point up, and how far its length is lifted.
-export function posture(pose) {
-  const R = rotation(HOLDS[pose.hold], pose.yaw, pose.pitch);
+// dims: the item (a sofa shape has a front and a back: its backrest is at +y, its seat on the bottom, -z).
+export function posture(pose, dims = [1, 1, 1]) {
+  const R = rotation(holdsFor(dims)[pose.hold], pose.yaw, pose.pitch), shape = !!dims.parts;
   const up = [0, 1, 2].map((i) => Math.asin(Math.min(1, Math.abs(R[2][i]))) * DEG); // how far each side points up
-  if (up[2] >= 81) return { kind: 'upright', text: 'upright, on its feet' };
-  if (up[1] >= 81) return { kind: 'back', text: 'on its back' };
+  if (up[2] >= 81) return R[2][2] < 0 && shape ? { kind: 'upside', text: 'upside down' } : { kind: 'upright', text: 'upright, on its feet' };
+  if (up[1] >= 81) return R[2][1] > 0 && shape ? { kind: 'front', text: 'on its front' } : { kind: 'back', text: 'on its back' };
   if (up[0] >= 81) return { kind: 'end', text: 'standing on its end' };
   if (up[0] >= 9) {
     const lift = Math.round(up[0] / 5) * 5, onBack = up[1] > up[2];
     return { kind: onBack ? 'liftBack' : 'lift', lift, text: `${onBack ? 'on its back with ' : 'with '}one end lifted about ${lift}°` };
   }
   const tip = Math.round(Math.max(up[1], 90 - up[2]) / 5) * 5;
-  return { kind: 'tip', tip, text: `tipped back about ${tip}°` };
+  const fwd = shape && R[2][1] > 0; // its back end is the higher one: tipped forward, onto its front
+  return { kind: fwd ? 'tipF' : 'tip', tip, text: `tipped ${fwd ? 'forward' : 'back'} about ${tip}°` };
 }
+
+let dimsOf = [1, 1, 1]; // the item being described (set by describe)
 
 const sameKind = (p, q) => p.kind === q.kind || (p.kind.startsWith('lift') && q.kind.startsWith('lift'));
 
 // spot: what the tight spot is called ('the corner', 'the door').
-export function describe(before, path, spot = 'the tight spot') {
+export function describe(before, path, spot = 'the tight spot', dims = [1, 1, 1]) {
+  dimsOf = dims;
   const steps = [];
-  const P = path.map((p) => ({ ...p, post: posture(p) }));
+  const P = path.map((p) => ({ ...p, post: posture(p, dims) }));
   // Say how to get it into its starting position only when that's more than lifting an end a little.
   if (before && before.length > 1 && !(P[0].post.kind === 'lift' && P[0].post.lift <= 30)) {
     steps.push(`Before it goes in, where there's room, get it ${P[0].post.text}.`);
@@ -67,12 +72,14 @@ function enter(prev, a, b) {
   if (to.kind === 'end') return prev.post.kind.startsWith('lift') ? 'Keep lifting until it stands on its end.' : 'Stand it on its end.';
   if (to.kind === 'upright') return 'Put it back down on its feet.';
   if (to.kind === 'back') return prev.post.kind.startsWith('lift') ? 'Lower it onto its back.' : 'Lay it on its back.';
-  return `Tip it back about ${to.tip}°.`;
+  if (to.kind === 'front') return 'Lay it on its front.';
+  if (to.kind === 'upside') return 'Turn it upside down.';
+  return `Tip it ${to.kind === 'tipF' ? 'forward' : 'back'} about ${to.tip}°.`;
 }
 
 // Is the raised end the one in front (in the direction it's moving)?
 function frontOrBack(a, b) {
-  const R = rotation(HOLDS[a.hold], a.yaw, a.pitch), ax = HOLDS[a.hold].a;
+  const R = rotation(holdsFor(dimsOf)[a.hold], a.yaw, a.pitch), ax = holdsFor(dimsOf)[a.hold].a;
   // The raised end of the tilted axis: the end with positive z (pitch > 0 raises +axis).
   const sx = R[0][ax] * Math.sign(R[2][ax] || 1), sy = R[1][ax] * Math.sign(R[2][ax] || 1);
   const dx = b.x - a.x, dy = b.y - a.y;

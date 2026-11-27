@@ -3,14 +3,20 @@
 import { solveTwoStage as solve, reachOf, smooth } from './src/plan.js';
 import { corner, sideDoor, roomDoor } from './src/scene.js';
 import { describe } from './src/describe.js';
+import { sofa } from './src/shape.js';
 
 const BUILD = { corner, sideDoor, roomDoor };
 const sceneFor = (kind, params, dims) => BUILD[kind]({ ...params, reach: reachOf(dims) });
-const SOLVE = { maxStates: 4e6 };
+const SOLVE = { maxStates: 3e6 };
 
 self.onmessage = (e) => {
-  const { id, dims, kind, params } = e.data;
+  const { id, kind, params, shape } = e.data;
+  let dims = e.data.dims;
   try {
+    if (shape) { // a sofa's shape instead of its box
+      dims = sofa({ L: dims[0], D: dims[1], H: dims[2], ...shape });
+      if (dims.error) { self.postMessage({ id, type: 'error', message: dims.error }); return; }
+    }
     const t0 = performance.now();
     const scene = sceneFor(kind, params, dims);
     const r = solve(dims, scene, SOLVE);
@@ -18,7 +24,7 @@ self.onmessage = (e) => {
     self.postMessage({
       id, type: 'result', found: r.found, capped: r.capped, noStart: !r.found && !r.doorTooSmall && r.seeds === 0, doorTooSmall: !!r.doorTooSmall, explored: r.explored,
       ms: Math.round(performance.now() - t0), path, before: r.before ?? null,
-      steps: r.found ? describe(r.before, path, scene.spot) : null,
+      steps: r.found ? describe(r.before, path, scene.spot, dims) : null,
     });
     // When it doesn't get through: how much wider the tight spot would have to be (both hallways at a corner, the
     // door opening at a door), to the nearest cm.
@@ -36,7 +42,7 @@ self.onmessage = (e) => {
     }
     // The longest box with the same depth and height that gets through (to the nearest cm), by halving.
     if (dims[0] < Math.max(dims[1], dims[2])) { self.postMessage({ id, type: 'longest', skip: true }); return; } // length isn't the longest side
-    const fits = (len) => { const d = [len, dims[1], dims[2]]; const q = solve(d, sceneFor(kind, params, d), { maxStates: 2e6 }); return q.capped ? null : q.found; };
+    const fits = (len) => { const d = shape ? sofa({ L: len, D: dims[1], H: dims[2], ...shape }) : [len, dims[1], dims[2]]; if (d.error) return false; const q = solve(d, sceneFor(kind, params, d), { maxStates: 2e6 }); return q.capped ? null : q.found; };
     const floor = Math.max(dims[1], dims[2]);
     let lo, hi;
     if (r.found) {

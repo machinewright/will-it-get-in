@@ -46,7 +46,7 @@ export function sideDoor({ a, b, doorH, t, past, ceiling, reach }) {
     { x0: x2, x1: x2 + R, y0: R, y1: R + T, zb: 0 },
   ];
   return {
-    kind: 'sideDoor', spot: 'the door', ceiling, blocks,
+    kind: 'sideDoor', spot: 'the door', ceiling, blocks, hallway: a, opening: { x: a, y0: 0, y1: b },
     window: { x0: -25, x1: x2 + reach, y0: -1.2 * reach, y1: b + Math.min(past, reach) + 25 }, viewFrom: Math.PI + 0.5, door: { width: b, height: doorH, depth: t },
     // Once the centre is more than `reach` into the room the whole box is in, so the grid stops there.
     bounds: { x0: 0, x1: x2 + reach + 10, y0: -Y, y1: Math.max(b + past, b + reach + 10) },
