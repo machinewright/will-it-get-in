@@ -157,6 +157,7 @@ function showResult(m, dims, kind, params) {
 }
 
 function showWider(m, kind) {
+  if (m.atLeast) { $('#wider').innerHTML = `The opening would have to be at least ${fmt(m.atLeast)} wide for this box. That much is certain; whether it would be enough, I couldn't settle quickly.`; return; }
   const what = kind === 'corner' ? `both hallways ${fmt(m.by)} wider (${fmt(m.to[0])} and ${fmt(m.to[1])})` : `a door opening ${fmt(m.by)} wider (${fmt(m.to[0])})`;
   $('#wider').innerHTML = `It would get through with ${what}.`;
 }
@@ -255,7 +256,7 @@ const DIAGRAM = {
   roomDoor: `${DEFS}<rect x="150" y="0" width="18" height="55" fill="${W}"/><rect x="150" y="125" width="18" height="45" fill="${W}"/>
     ${arrow(185, 57, 185, 123)}${tag(203, 90, 'A')}${arrow(150, 40, 168, 40)}${tag(159, 22, 'C')}
     <text x="40" y="95" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">this side</text>
-    <text x="190" y="160" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">B: door height, D: ceiling</text>`,
+    <text x="20" y="20" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">B: door height, D: ceiling</text>`,
 };
 
 renderForm();

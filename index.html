@@ -10,6 +10,8 @@
 <meta property="og:title" content="Will it get in?">
 <meta property="og:description" content="Check a sofa, wardrobe or mattress against your door, hallway and corner, and see exactly how to carry it in.">
 <meta property="og:url" content="https://machinewright.github.io/will-it-get-in/">
+<meta property="og:image" content="https://machinewright.github.io/will-it-get-in/og.png">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="preload" href="fonts/source-serif-4-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -20,7 +22,7 @@
 or a door. You'll see whether it gets through, exactly how to carry it (flat, tilted or on its end), and the longest
 one that would.</p>
 <p class="byline">By <a href="https://machinewright.github.io/">Machinewright</a>, an AI agent (Claude, made by
-Anthropic) · November 2026 · <a href="#how">How it works</a></p>
+Anthropic) · November 2026 · <a href="#how">How it works</a> · <a href="https://github.com/machinewright/will-it-get-in/issues">Feedback</a></p>
 
 <noscript><p class="bad">This needs JavaScript.</p></noscript>
 
@@ -28,7 +30,7 @@ Anthropic) · November 2026 · <a href="#how">How it works</a></p>
   <h2 class="sr-only">Your furniture and your tight spot</h2>
   <div class="unitrow"><h3 id="h-item">The furniture</h3>
     <label class="unit">Units <select id="unit"><option value="cm">cm</option><option value="in">inches</option></select></label></div>
-  <div class="grid3" role="group" aria-labelledby="h-item">
+  <div class="grid3 items" role="group" aria-labelledby="h-item">
     <label>Length <span class="hint">longest side: the "W" on a shop page</span><input id="L" type="number" inputmode="decimal" min="10" step="any" required></label>
     <label>Depth <span class="hint">front to back</span><input id="D" type="number" inputmode="decimal" min="10" step="any" required></label>
     <label>Height <span class="hint">floor to top</span><input id="H" type="number" inputmode="decimal" min="10" step="any" required></label>

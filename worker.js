@@ -24,12 +24,14 @@ self.onmessage = (e) => {
     // door opening at a door), to the nearest cm.
     if (!r.found && !r.capped) {
       const keys = kind === 'corner' ? ['a', 'b'] : ['b'];
-      const wider = (k) => { const pp = { ...params }; for (const key of keys) pp[key] += k; const q = solve(dims, sceneFor(kind, pp, dims), SOLVE); return q.capped ? null : q.found; };
+      const wider = (k) => { const pp = { ...params }; for (const key of keys) pp[key] += k; const q = solve(dims, sceneFor(kind, pp, dims), { maxStates: 1.5e6 }); return q.capped ? null : q.found; };
       let lo = 0, hi = null;
       for (let k = r.doorTooSmall ? Math.ceil(Math.min(...dims) + 2 - params.b) : 5; k <= 160; k += 10) { const f = wider(k); if (f === null) break; if (f) { hi = k; break; } lo = k; }
       if (hi !== null) {
         while (hi - lo > 1) { const mid = Math.round((lo + hi) / 2), f = wider(mid); if (f === null) break; if (f) hi = mid; else lo = mid; }
         self.postMessage({ id, type: 'wider', by: hi, keys, to: keys.map((k2) => params[k2] + hi) });
+      } else if (r.doorTooSmall) {
+        self.postMessage({ id, type: 'wider', atLeast: Math.min(...dims) + 2 });
       }
     }
     // The longest box with the same depth and height that gets through (to the nearest cm), by halving.
