@@ -94,14 +94,15 @@ function clipAbove(o, z0, q) {
 // (Blocks grow by m on every side and downwards, the ceiling comes down by m: an L-infinity margin, so the true
 // Euclidean clearance is at least m.)
 export function clear(scene, o, x, y, m) {
-  if (o.top > scene.ceiling - m) return false;
+  const lift = scene.ramp ? liftOf(scene.ramp, o, y) : 0;
+  if (o.top + lift > scene.ceiling - m) return false;
   for (const b of scene.blocks) {
     const x0 = b.x0 - m - x, x1 = b.x1 + m - x, y0 = b.y0 - m - y, y1 = b.y1 + m - y; // block relative to the centre
     // Quick reject with the box's own bounding rectangle.
     if (o.maxx <= x0 || o.minx >= x1 || o.maxy <= y0 || o.miny >= y1) continue;
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, hx = (x1 - x0) / 2, hy = (y1 - y0) / 2;
     for (let q = 0; q < o.np; q++) { // each part on its own: the item is clear iff every part is
-      const n = clipAbove(o, b.zb - m, q);
+      const n = clipAbove(o, b.zb - m - lift, q);
       if (n === 0) continue;
       let separated = false;
       const ax = o.axes, nax = o.nax;
@@ -121,3 +122,28 @@ export function clear(scene, o, x, y, m) {
 // Floor-plan extent of the box at (x, y): used for "is it fully in the hallway / the room yet?".
 export const extent = (o, x, y) => ({ minx: x + o.minx, maxx: x + o.maxx, miny: y + o.miny, maxy: y + o.maxy });
 
+
+// Stairs. A flight going up along +y: its first riser at y = 0, each step `rise` high and `going` deep, `n` risers
+// in all; the top one is at y = top = (n - 1) going, where the floor above starts (height n rise). Instead of the
+// steps themselves the item meets the slope through the step edges (the nosings): the floor height is
+// f(y) = clamp(rise (1 + y / going), 0, n rise). Every tread lies under that slope, so clearing the slope clears
+// the steps (it loses only the notches under each nosing, which nothing big fits into anyway).
+export function rampAt(r, y) { return Math.min(r.n * r.rise, Math.max(0, r.rise * (1 + y / r.going))); }
+
+// The item is carried, not resting: at each position it is at the lowest height that clears that slope. Lowest is
+// best, because everything else (ceilings, the bulkhead) only limits it from above. f is piecewise linear, convex
+// at the bottom kink and concave at the top one, so the lowest height is decided by the corners plus the item's
+// cross-section at the top kink. Returns how far its lowest point is above the bottom floor (0 off the stairs).
+export function liftOf(r, o, y) {
+  const v = o.verts, top = (r.n - 1) * r.going, H = r.n * r.rise;
+  let lift = 0;
+  for (let k = 0; k < v.length; k += 3) { const need = rampAt(r, y + v[k + 1]) - v[k + 2]; if (need > lift) lift = need; }
+  for (let q = 0; q < o.np; q++) {
+    const b = 24 * q;
+    for (let e = 0; e < EDGES.length; e += 2) {
+      const i = b + 3 * EDGES[e], j = b + 3 * EDGES[e + 1], yi = y + v[i + 1], yj = y + v[j + 1];
+      if ((yi < top) !== (yj < top)) { const t = (top - yi) / (yj - yi), z = v[i + 2] + t * (v[j + 2] - v[i + 2]); if (H - z > lift) lift = H - z; }
+    }
+  }
+  return lift;
+}

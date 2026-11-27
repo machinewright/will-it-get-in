@@ -5,9 +5,9 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { solve, solveTwoStage, reachOf, smooth } from '../src/plan.js';
+import { solve, solveTwoStage, reachOf, smooth, liftAt } from '../src/plan.js';
 import { describe } from '../src/describe.js';
-import { corner, sideDoor, roomDoor } from '../src/scene.js';
+import { corner, sideDoor, roomDoor, stairs } from '../src/scene.js';
 import { holdsFor } from '../src/geom.js';
 import { sofa } from '../src/shape.js';
 
@@ -27,7 +27,7 @@ function frame(pose, dims) {
     for (let k = 0; k < 3; k++) z += ((i >> k) & 1 ? 1 : -1) * b.half[k] * ax[k][2];
     low = Math.min(low, z);
   }
-  const c = [pose.x, pose.y, -low];
+  const c = [pose.x, pose.y, -low + (pose.z ?? 0)];
   return { boxes: boxes.map((b) => ({ c: [c[0] + b.off[0], c[1] + b.off[1], c[2] + b.off[2]], ax, half: b.half })) };
 }
 
@@ -79,8 +79,16 @@ function poseOK(f, scene, edgePts, e) {
   if (corners(f).some((p) => p[2] > scene.ceiling - e)) return 'ceiling';
   for (const p of surface(f, 2)) for (const b of scene.blocks) if (inBlock(b, p, e)) return 'box surface in a wall';
   for (const p of edgePts) if (inBox(f, p, e)) return 'wall edge in the box';
+  if (scene.stairs) { // the real steps, not the solver's slope: no surface point under a tread, no step edge inside
+    const st = scene.stairs;
+    for (const p of surface(f, 2)) if (p[2] < treadAt(st, p[1]) - 0.05) return `box below a step (${p.map((v) => v.toFixed(1))})`;
+    for (let i = 1; i <= st.n; i++) for (let x = 0; x <= st.w; x += 0.5) if (inBox(f, [x, (i - 1) * st.going, i * st.rise], -0.05)) return `step edge ${i} in the box`;
+  }
   return null;
 }
+
+// Height of the floor at y: the bottom floor, then step i (from 1) from y = (i - 1) going, then the floor above.
+const treadAt = (st, y) => (y < 0 ? 0 : Math.min(st.n, Math.floor(y / st.going) + 1) * st.rise);
 
 const sameShape = (f, g) => {
   const key = (h) => corners(h).map((p) => p.map((v) => Math.round(v * 100)).join(',')).sort().join(';');
@@ -91,7 +99,9 @@ export function verifyPath(r, dims, scene, e = 0.6) {
   const edgePts = blockEdges(scene, 0.5);
   const P = r.path;
   for (let i = 0; i < P.length; i++) {
-    const why = poseOK(frame(P[i], dims), scene, edgePts, e);
+    const lift = (pose) => ({ ...pose, z: liftAt(dims, scene, pose) }); // the solver's carrying height
+    if (scene.stairs && Math.abs(liftAt(dims, scene, P[i]) - (P[i].z ?? 0)) > 1e-6) return `pose ${i}: height isn't the carrying height`;
+    const why = poseOK(frame(lift(P[i]), dims), scene, edgePts, e);
     if (why) return `pose ${i}: ${why}`;
     if (i === 0) continue;
     const A = P[i - 1], B = P[i];
@@ -102,11 +112,15 @@ export function verifyPath(r, dims, scene, e = 0.6) {
     // Sub-steps: at most 0.5 cm of travel for any point of the box between them.
     const R0 = Math.hypot(...dims) / 2;
     const K = Math.max(12, Math.ceil((Math.hypot(B.x - A.x, B.y - A.y) + R0 * Math.abs(dy) + 3 * R0 * Math.abs(B.pitch - A.pitch)) / 0.5));
+    let zPrev = liftAt(dims, scene, A);
     for (let k = 1; k < K; k++) {
       const t = k / K;
       const pose = A.hold !== B.hold ? { ...A, x: A.x + t * (B.x - A.x), y: A.y + t * (B.y - A.y) }
         : { hold: A.hold, x: A.x + t * (B.x - A.x), y: A.y + t * (B.y - A.y), yaw: A.yaw + t * dy, pitch: A.pitch + t * (B.pitch - A.pitch) };
-      const why2 = poseOK(frame(pose, dims), scene, edgePts, e);
+      const z = liftAt(dims, scene, pose);
+      if (Math.abs(z - zPrev) > 2) return `between poses ${i - 1} and ${i}: height jumps ${(z - zPrev).toFixed(1)} cm`;
+      zPrev = z;
+      const why2 = poseOK(frame({ ...pose, z }, dims), scene, edgePts, e);
       if (why2) return `between poses ${i - 1} and ${i}: ${why2}`;
     }
   }
@@ -269,4 +283,55 @@ test('sofa postures are named from the face that is down (audit repros)', async 
   // Upright with the backrest lower: tipped back.
   const t = posture({ hold: 3, yaw: 0, pitch: -30 * deg }, d).text + ' | ' + posture({ hold: 3, yaw: 0, pitch: 30 * deg }, d).text;
   assert.match(t, /tipped back/); assert.match(t, /tipped forward/);
+});
+
+test('stairs: carrying height is the lowest that clears the slope (dense samples)', async () => {
+  const { rampAt, liftOf, orient, rotation } = await import('../src/geom.js');
+  let seed = 5; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const ramp = { rise: 19, going: 24, n: 12 }, top = 11 * 24;
+  for (let i = 0; i < 300; i++) {
+    const d = i % 2 ? [100 + rnd() * 120, 40 + rnd() * 50, 30 + rnd() * 60] : sofa({ L: 190, D: 90, H: 80, seatH: 42, backT: 18, armH: 60, armW: 14 });
+    const pose = { hold: Math.floor(rnd() * holdsFor(d).length), yaw: rnd() * 6.28, pitch: (rnd() - 0.3) * 1.5, x: 0, y: -60 + rnd() * (top + 120) };
+    if (!d.parts && pose.pitch < 0) pose.pitch = -pose.pitch;
+    const z = liftOf(ramp, orient(d, rotation(holdsFor(d)[pose.hold], pose.yaw, pose.pitch)), pose.y);
+    // Independently: the item's surface at that height, sampled every 0.5 cm, must be on or above the slope, and
+    // touch it (within the sampling) somewhere unless it's on the bottom floor.
+    const f = frame({ ...pose, z }, d);
+    let worst = Infinity;
+    for (const p of surface(f, 0.5)) worst = Math.min(worst, p[2] - rampAt(ramp, p[1]));
+    assert.ok(worst > -1e-6, `case ${i}: below the slope by ${-worst}`);
+    if (z > 1e-6) assert.ok(worst < 0.35, `case ${i}: ${worst.toFixed(2)} cm above the slope: not the lowest`);
+  }
+});
+
+test('stairs: hand cases and random flights pass the independent check (real steps, not the slope)', () => {
+  // A 190 x 50 x 40 box up a straight 85 cm flight: on its back, tilted to the slope (41.6 degrees, 190 sin + 40 cos
+  // = 156 cm tall, under the 240 cm ceiling) it simply slides up. It must find a way.
+  let d = [190, 50, 40];
+  let scene = stairs({ w: 85, n: 13, rise: 20, going: 22.5, headroom: 200, hc: 240, b: 90, turn: false, reach: reachOf(d) });
+  let r = solveTwoStage(d, scene);
+  assert.equal(r.found, true);
+  assert.equal(verifyPath(r, d, scene), null);
+  assert.equal(verifyPath({ ...r, path: smooth(d, scene, r.path) }, d, scene), null);
+  // Wider than the flight both ways it lies down, and too long to stand on end under 240 cm: 90 x 90 x 260.
+  d = [260, 90, 90];
+  scene = stairs({ w: 85, n: 13, rise: 20, going: 22.5, headroom: 200, hc: 240, b: 90, turn: false, reach: reachOf(d) });
+  assert.equal(solveTwoStage(d, scene).found, false);
+
+  let seed = 31; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  let found = 0;
+  for (let i = 0; i < 16; i++) {
+    const shape = i % 4 === 3;
+    const d2 = shape ? sofa({ L: 150 + Math.round(rnd() * 60), D: 80, H: 75, seatH: 42, backT: 16, armH: rnd() < 0.5 ? 0 : 60, armW: 12 })
+      : [100 + Math.round(rnd() * 120), 40 + Math.round(rnd() * 50), 30 + Math.round(rnd() * 50)];
+    const rise = 17 + Math.round(rnd() * 5), hc = 230 + Math.round(rnd() * 20);
+    const sc = stairs({ w: 75 + Math.round(rnd() * 30), n: 11 + Math.round(rnd() * 4), rise, going: 21 + Math.round(rnd() * 8),
+      headroom: 190 + Math.round(rnd() * 25), hc, b: 80 + Math.round(rnd() * 40), turn: i % 2 === 0, reach: reachOf(d2) });
+    const r2 = solveTwoStage(d2, sc, { maxStates: 1e6 });
+    if (!r2.found) continue;
+    found++;
+    assert.equal(verifyPath(r2, d2, sc), null, `stairs case ${i}`);
+    assert.equal(verifyPath({ ...r2, path: smooth(d2, sc, r2.path) }, d2, sc), null, `stairs case ${i} smoothed`);
+  }
+  assert.ok(found >= 6, `only ${found} of 16 stair cases had a way`);
 });

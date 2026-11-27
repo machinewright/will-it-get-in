@@ -85,3 +85,62 @@ export function roomDoor({ b, doorH, t, ceiling, reach }) {
     opening: { x: 0, y0: 0, y1: b },
   };
 }
+
+// Stairs, then a turn at the top. Coming along a hallway `w` wide (along +y) to a flight of the same width: `n`
+// risers, each `rise` high and `going` deep, the first at y = 0. At the top (y = Y0 = (n - 1) going, height
+// n rise) a hallway `b` wide turns off to the right (+x), or with turn = false the way goes straight on, `w` wide.
+// Both floors have ceilings `hc` high. Over the stairs the upper floor is open (the stairwell), except near the
+// bottom, where its edge (the bulkhead) is the lowest point over the flight: `headroom` above the slope through the
+// step edges. Positions are plan positions; the item's height comes from the slope (geom.js, liftOf).
+export function stairs({ w, n, rise, going, headroom, hc, b, turn = true, reach }) {
+  const Y0 = (n - 1) * going, H = n * rise;
+  const yb = (hc - headroom - rise) * going / rise; // where the bulkhead's edge is
+  const Y = 2 * reach + going + 40;                    // bottom hallway: long enough to start entirely off the stairs
+  const ramp = { rise, going, n };
+  const common = {
+    kind: 'stairs', ceiling: H + hc, startCeiling: hc, ramp, stairs: { w, n, rise, going, Y0, yb, headroom, hc, turn, b },
+    liftFactor: 2 + rise / going, // a point's height changes with the slope as it moves (see plan.js)
+    seed: { x: w / 2, y: -Y + reach + 5 },
+    viewFrom: -Math.PI / 2 - 0.55,
+  };
+  const bulk = { x0: 0, x1: w, y0: -Y - T, y1: Math.min(yb, Y0), zb: hc }; // ceiling of the bottom floor, up to the bulkhead
+  if (turn) {
+    const X = w + 2 * reach + 40;
+    return {
+      ...common, spot: 'the stairs',
+      blocks: [
+        { x0: -T, x1: 0, y0: -Y - T, y1: Y0 + b + T, zb: 0 },
+        { x0: -T, x1: X + T, y0: Y0 + b, y1: Y0 + b + T, zb: 0 },
+        { x0: w, x1: X + T, y0: -Y - T, y1: Y0, zb: 0 },
+        { x0: 0, x1: w, y0: -Y - T, y1: -Y, zb: 0 },
+        { x0: X, x1: X + T, y0: Y0, y1: Y0 + b, zb: 0 },
+        bulk,
+      ],
+      window: { x0: -25, x1: w + 1.3 * reach, y0: -1.3 * reach, y1: Y0 + b + 25 },
+      bounds: { x0: 0, x1: X, y0: -Y, y1: Y0 + b },
+      snap: { x: 0, y: Y0 + b },
+      inside: (x, y) => (x >= 0 && x <= w && y >= -Y && y <= Y0 + b) || (y >= Y0 && y <= Y0 + b && x >= 0 && x <= X),
+      start: (e) => e.maxy <= -going && e.minx >= 0 && e.maxx <= w,
+      goal: (e) => e.minx >= w && e.miny >= Y0 && e.maxy <= Y0 + b,
+      togo: (e) => Math.max(0, w - e.minx) + Math.max(0, Y0 - e.miny),
+    };
+  }
+  const Yend = Y0 + 2 * reach + 40;
+  return {
+    ...common, spot: 'the stairs',
+    blocks: [
+      { x0: -T, x1: 0, y0: -Y - T, y1: Yend + T, zb: 0 },
+      { x0: w, x1: w + T, y0: -Y - T, y1: Yend + T, zb: 0 },
+      { x0: 0, x1: w, y0: -Y - T, y1: -Y, zb: 0 },
+      { x0: 0, x1: w, y0: Yend, y1: Yend + T, zb: 0 },
+      bulk,
+    ],
+    window: { x0: -25, x1: w + 25, y0: -1.1 * reach, y1: Y0 + 1.1 * reach },
+    bounds: { x0: 0, x1: w, y0: -Y, y1: Yend },
+    snap: { x: 0, y: Yend },
+    inside: (x, y) => x >= 0 && x <= w && y >= -Y && y <= Yend,
+    start: (e) => e.maxy <= -going,
+    goal: (e) => e.miny >= Y0,
+    togo: (e) => Math.max(0, Y0 - e.miny),
+  };
+}

@@ -10,7 +10,7 @@
 // between them. So at every moment in between, every point of the box is within d of a checked position, and the
 // whole movement keeps at least `margin` from walls, door frame and ceiling.
 
-import { holdsFor, rotation, rotationInto, orient, clear, extent } from './geom.js';
+import { holdsFor, rotation, rotationInto, orient, clear, extent, liftOf } from './geom.js';
 
 export const DEFAULTS = { greed: 2, step: 2.5, yawSteps: 144, pitchSteps: 36, margin: 1, slack: 0.5, maxStates: 6e6 };
 
@@ -26,6 +26,9 @@ export function solve(dims, scene, opts = {}) {
   const m = margin + slack;
   const reach = reachOf(dims);
   const dYaw = (2 * Math.PI) / NY, dPitch = Math.PI / 2 / pitchSteps;
+  // On stairs the item's height follows the slope under it, so its points also move up and down: a point that
+  // moves by d along the floor plan or its own height rises or falls by at most (1 + slope) d more (see geom.js).
+  const LF = scene.liftFactor ?? 1;
 
   // Positions: grid points (centres) inside the scene's region.
   const { x0, x1, y0, y1 } = scene.bounds;
@@ -125,7 +128,7 @@ export function solve(dims, scene, opts = {}) {
     const xa = X(ida, posa), ya = Y(ida, posa), dx = X(idb, posb) - xa, dyy = Y(idb, posb) - ya;
     if (A.h !== B.h) { // same orientation through another hold: only the grid shift can differ
       if (Math.hypot(dx, dyy) < 1e-9) return true;
-      const k = Math.ceil(Math.hypot(dx, dyy) / (2 * slack));
+      const k = Math.ceil(Math.hypot(dx, dyy) * LF / (2 * slack));
       for (let i = 1; i < k; i++) if (!clear(scene, ori(ida), xa + (i / k) * dx, ya + (i / k) * dyy, m)) return false;
       return true;
     }
@@ -134,7 +137,7 @@ export function solve(dims, scene, opts = {}) {
     // Longest path any point of the box can travel: translation + turning about the vertical + tilting (the tilt
     // also lifts or lowers the centre: at most the sum of the half sizes, < 2 * reach).
     const travel = Math.hypot(dx, dyy) + reach * Math.abs(dy) + 2.8 * reach * Math.abs(dp);
-    const k = Math.ceil(travel / (2 * slack));
+    const k = Math.ceil(travel * LF / (2 * slack));
     for (let i = 1; i < k; i++) {
       const t = i / k;
       const oo = orient(dims, rotationInto(scratchR, HOLDS[A.h], A.yaw + t * dy, A.pitch + t * dp), scratchO);
@@ -148,7 +151,7 @@ export function solve(dims, scene, opts = {}) {
   // there. Tilting a hold's axis up to pitch p makes the box dims[a] sin p + dims[v] cos p tall (whatever the yaw),
   // which peaks at the diagonal sqrt(dims[a]^2 + dims[v]^2) when tan p = dims[a] / dims[v]: so a tilt from p0 to
   // p1 fits exactly when that height stays under the ceiling over the whole range.
-  const limit = scene.ceiling - m;
+  const limit = (scene.startCeiling ?? scene.ceiling) - m; // (on stairs: the ceiling where it starts)
   // (For a shape these are its bounding box's sizes: it is no taller than that, so this never allows too much.)
   const tallest = (hd, p0, p1) => {
     const A = dims[hd.a], V = dims[hd.v], peak = Math.atan2(A, V), f = (p) => A * Math.abs(Math.sin(p)) + V * Math.cos(p);
@@ -321,7 +324,7 @@ export function solve(dims, scene, opts = {}) {
     const path = [];
     for (let i = found; i >= 0; i = par[i]) {
       const a = angles(qo[i]);
-      path.push({ x: X(qo[i], qp[i]), y: Y(qo[i], qp[i]), hold: a.h, yaw: a.yaw, pitch: a.pitch });
+      path.push({ x: X(qo[i], qp[i]), y: Y(qo[i], qp[i]), hold: a.h, yaw: a.yaw, pitch: a.pitch, z: scene.ramp ? liftOf(scene.ramp, ori(qo[i]), Y(qo[i], qp[i])) : 0 });
     }
     result.path = path.reverse();
     if (scene.openStart) { // begin from the checked approach: entirely in front of the wall
@@ -344,7 +347,7 @@ export function straightClear(dims, scene, A, B, opts = {}) {
   let dy = B.yaw - A.yaw; if (dy > Math.PI) dy -= 2 * Math.PI; if (dy < -Math.PI) dy += 2 * Math.PI;
   const dp = B.pitch - A.pitch, dx = B.x - A.x, dyy = B.y - A.y;
   const travel = Math.hypot(dx, dyy) + reach * Math.abs(dy) + 2.8 * reach * Math.abs(dp);
-  const k = Math.max(1, Math.ceil(travel / (2 * slack)));
+  const k = Math.max(1, Math.ceil(travel * (scene.liftFactor ?? 1) / (2 * slack)));
   const R = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
   let o;
   for (let i = 0; i <= k; i++) {
@@ -380,4 +383,10 @@ export function solveTwoStage(dims, scene, opts = {}) {
   const coarse = solve(dims, scene, { ...opts, step: 5, yawSteps: 72, pitchSteps: 18 });
   if (coarse.found || coarse.doorTooSmall) return coarse;
   return solve(dims, scene, opts);
+}
+
+// How high the item at this pose is carried (its lowest point above the bottom floor): 0 except on stairs.
+export function liftAt(dims, scene, pose) {
+  if (!scene.ramp) return 0;
+  return liftOf(scene.ramp, orient(dims, rotation(holdsFor(dims)[pose.hold], pose.yaw, pose.pitch)), pose.y);
 }

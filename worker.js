@@ -1,11 +1,11 @@
 // Runs the search off the main thread.
 // In: { id, dims, kind, params }. Out: { id, type: 'result', ... } then { id, type: 'longest', ... }.
 import { solveTwoStage as solve, reachOf, smooth } from './src/plan.js';
-import { corner, sideDoor, roomDoor } from './src/scene.js';
+import { corner, sideDoor, roomDoor, stairs } from './src/scene.js';
 import { describe } from './src/describe.js';
 import { sofa } from './src/shape.js';
 
-const BUILD = { corner, sideDoor, roomDoor };
+const BUILD = { corner, sideDoor, roomDoor, stairs: (p) => stairs({ ...p, turn: p.b > 0 }) };
 const sceneFor = (kind, params, dims) => BUILD[kind]({ ...params, reach: reachOf(dims) });
 const SOLVE = { maxStates: 3e6 };
 
@@ -29,7 +29,7 @@ self.onmessage = (e) => {
     // When it doesn't get through: how much wider the tight spot would have to be (both hallways at a corner, the
     // door opening at a door), to the nearest cm.
     if (!r.found && !r.capped) {
-      const keys = kind === 'corner' ? ['a', 'b'] : ['b'];
+      const keys = kind === 'corner' ? ['a', 'b'] : kind === 'stairs' ? (params.b > 0 ? ['w', 'b'] : ['w']) : ['b'];
       const wider = (k) => { const pp = { ...params }; for (const key of keys) pp[key] += k; const q = solve(dims, sceneFor(kind, pp, dims), { maxStates: 1.5e6 }); return q.capped ? null : q.found; };
       let lo = 0, hi = null;
       for (let k = r.doorTooSmall ? Math.ceil(Math.min(...dims) + 2 - params.b) : 5; k <= 160; k += 10) { const f = wider(k); if (f === null) break; if (f) { hi = k; break; } lo = k; }

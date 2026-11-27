@@ -1,7 +1,7 @@
 // Draws the scene and the box at a pose on a canvas: a simple perspective view (or straight down from above).
 // Walls are drawn see-through so the box stays visible; the box's shadow on the floor shows where it is.
 
-import { holdsFor, rotation, orient } from './geom.js';
+import { holdsFor, rotation, orient, liftOf, rampAt } from './geom.js';
 
 export function makeView(canvas, scene, dims) {
   const ctx = canvas.getContext('2d');
@@ -41,8 +41,9 @@ export function makeView(canvas, scene, dims) {
 
   function boxFaces(pose) {
     const o = orient(dims, rotation(holdsFor(dims)[pose.hold], pose.yaw, pose.pitch));
+    const lift = scene.ramp ? liftOf(scene.ramp, o, pose.y) : 0; // carried up the stairs
     const V = [];
-    for (let i = 0; i < o.verts.length / 3; i++) V.push([pose.x + o.verts[3 * i], pose.y + o.verts[3 * i + 1], o.verts[3 * i + 2]]);
+    for (let i = 0; i < o.verts.length / 3; i++) V.push([pose.x + o.verts[3 * i], pose.y + o.verts[3 * i + 1], lift + o.verts[3 * i + 2]]);
     // Each part's vertices are indexed by bits (1: +length, 2: +depth, 4: +height).
     const F = [[0, 2, 6, 4], [1, 5, 7, 3], [0, 4, 5, 1], [2, 3, 7, 6], [0, 1, 3, 2], [4, 6, 7, 5]];
     const faces = [];
@@ -65,6 +66,15 @@ export function makeView(canvas, scene, dims) {
     const facing = (f) => { const n = cross(sub(f[1], f[0]), sub(f[2], f[0])); return dot(n, sub(cam.eye, f[0])) > 0; };
     // Floor.
     poly([[W.x0, W.y0, 0], [W.x1, W.y0, 0], [W.x1, W.y1, 0], [W.x0, W.y1, 0]], '#efe9dc', null);
+    // Stairs: each step as a solid block, then the floor above, drawn back to front.
+    if (scene.stairs) {
+      const st = scene.stairs, H = st.n * st.rise, xr = st.turn ? W.x1 : st.w;
+      const solids = [];
+      for (let i = 1; i < st.n; i++) solids.push(prism(0, st.w, (i - 1) * st.going, i * st.going, 0, i * st.rise));
+      solids.push(prism(0, xr, st.Y0, W.y1, 0, H));
+      const fs = solids.flatMap((pr) => pr.filter(facing)).map((f) => ({ f, d: dot(sub(centroid(f), cam.eye), cam.f) })).sort((p, q) => q.d - p.d);
+      for (const { f } of fs) { const up = f.every((p) => p[2] === f[0][2]) && f[0][2] > 0; poly(f, up ? '#e6dcc8' : '#cdbfa5', 'rgba(90,80,64,0.5)'); }
+    }
     // Walls: faces turned away first (behind everything), then their footprints.
     const wallFaces = blocks.flatMap((b) => prism(b.x0, b.x1, b.y0, b.y1, b.zb, top).map((f) => ({ f, b })));
     for (const { f } of wallFaces) if (!facing(f)) poly(f, 'rgba(140,128,108,0.30)', 'rgba(90,80,64,0.35)');
@@ -73,7 +83,7 @@ export function makeView(canvas, scene, dims) {
       const { faces, V } = boxFaces(pose);
       // Shadow: the convex hull of the corners on the floor.
       const hull = convexHull(V.map((v) => [v[0], v[1]]));
-      poly(hull.map(([x, y]) => [x, y, 0]), 'rgba(40,50,70,0.18)', null);
+      poly(hull.map(([x, y]) => [x, y, scene.ramp ? rampAt(scene.ramp, y) + 0.5 : 0]), 'rgba(40,50,70,0.18)', null);
       const light = norm([0.3, -0.5, 0.8]);
       const order = faces.filter(facing).map((f) => ({ f, d: dot(sub(centroid(f), cam.eye), cam.f) })).sort((p, q) => q.d - p.d);
       for (const { f } of order) {

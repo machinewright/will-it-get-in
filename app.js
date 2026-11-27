@@ -1,10 +1,11 @@
-import { corner, sideDoor, roomDoor } from './src/scene.js';
+import { corner, sideDoor, roomDoor, stairs } from './src/scene.js';
 import { reachOf } from './src/plan.js';
 import { makeView } from './src/view.js';
 import { sofa } from './src/shape.js';
 
 const $ = (s) => document.querySelector(s);
-const BUILD = { corner, sideDoor, roomDoor };
+const BUILD = { corner, sideDoor, roomDoor, stairs: (p) => stairs({ ...p, turn: p.b > 0 }) };
+const SPOT = { corner: 'the corner', sideDoor: 'the door', roomDoor: 'the door', stairs: 'the stairs' };
 
 // Fields for each kind of tight spot (values kept in cm). The letters match the diagram.
 const FIELDS = {
@@ -27,11 +28,21 @@ const FIELDS = {
     ['t', 'C', 'Wall thickness', 'frame to frame', 12],
     ['ceiling', 'D', 'Ceiling height', 'the lower of the two', 240],
   ],
+  stairs: [
+    ['w', 'A', 'Stair width', 'wall to wall, or to the handrail', 85],
+    ['n', 'B', 'Number of steps', 'up to the floor above', 13],
+    ['rise', 'C', 'Step height', 'one step, floor to floor ÷ steps', 20],
+    ['going', 'D', 'Step depth', 'front edge to front edge', 22.5],
+    ['headroom', 'E', 'Headroom', 'lowest point: straight up from a step edge', 200],
+    ['hc', 'F', 'Ceiling height', 'downstairs and upstairs', 240],
+    ['b', 'G', 'Hallway at the top', 'its width; 0 if straight on', 90],
+  ],
 };
 const NOTES = {
   corner: 'Measure each hallway at its narrowest, wall to wall (skirting boards, radiators and door frames stick out).',
   sideDoor: 'Measure the door opening with the door fully open, between the door stops (and the open door itself, if it sticks into the opening). It works the same in either direction: hallway into room, or room into hallway.',
   roomDoor: 'For a door between two rooms, or the front door from outside. Measure the opening with the door fully open, between the door stops.',
+  stairs: 'A straight flight between walls, with the hallway at the top turning off to one side (or 0: the way goes straight on). Headroom: where the ceiling edge comes lowest over the stairs, measure straight up from the step edge below it. I treat the stairs as a slope through the step edges (a little less room than the real steps), and it\'s carried at the lowest height that clears them.',
 };
 
 // ---- State, units ----
@@ -52,7 +63,7 @@ function valid(s) {
   if (s.shape !== undefined && (typeof s.shape !== 'object' || s.shape === null || !Object.entries(s.shape).every(([k, v]) => SHAPE_KEYS.includes(k) && typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 5000))) return false;
   for (const [k, vals] of Object.entries(s.spot ?? {})) {
     if (!(k in FIELDS) || typeof vals !== 'object' || vals === null) return false;
-    for (const [key, v] of Object.entries(vals)) if (!FIELDS[k].some((f) => f[0] === key) || !(pos(v) || (key === 'past' && v === 0))) return false;
+    for (const [key, v] of Object.entries(vals)) if (!FIELDS[k].some((f) => f[0] === key) || !(pos(v) || ((key === 'past' || (k === 'stairs' && key === 'b')) && v === 0))) return false;
   }
   return true;
 }
@@ -67,7 +78,7 @@ function load() {
 const save = () => { try { localStorage.setItem('will-it-get-in', JSON.stringify(state)); } catch { /* private mode */ } };
 const spotVal = (k, key) => state.spot[k]?.[key] ?? FIELDS[k].find((f) => f[0] === key)[4];
 // Round defaults for people measuring in inches (used while a field still holds its untouched cm default).
-const IN_DEFAULT = { L: 84, D: 36, H: 34, a: 40, b: 32, ceiling: 96, doorH: 80, t: 5, past: 40, seatH: 18, backT: 8, armH: 25, armW: 6 };
+const IN_DEFAULT = { L: 84, D: 36, H: 34, a: 40, b: 32, ceiling: 96, doorH: 80, t: 5, past: 40, seatH: 18, backT: 8, armH: 25, armW: 6, w: 34, rise: 7.5, going: 9, headroom: 80, hc: 96 };
 const CM_DEFAULT = { L: 200, D: 90, H: 85 };
 function shown(key, cm, isDefault) { return state.unit === 'in' && isDefault && key in IN_DEFAULT ? IN_DEFAULT[key] : show(cm); }
 
@@ -79,17 +90,23 @@ function renderForm() {
   for (const k of SHAPE_KEYS) { const v = state.shape?.[k] ?? DEFAULT.shape[k]; $('#' + k).value = shown(k, v, v === DEFAULT.shape[k]); }
   document.querySelectorAll('input[name=kind]').forEach((r) => { r.checked = r.value === state.kind; });
   $('#spotFields').innerHTML = FIELDS[state.kind].map(([key, letter, label, hint]) =>
-    `<label><span><b class="tag">${letter}</b> ${label}</span><span class="hint">${hint}</span><input id="f-${key}" data-key="${key}" type="number" inputmode="decimal" min="${key === 'past' ? 0 : 1}" step="any" required value="${shown(key, spotVal(state.kind, key), state.spot[state.kind]?.[key] === undefined)}"></label>`).join('');
+    `<label><span><b class="tag">${letter}</b> ${label}</span><span class="hint">${hint}</span><input id="f-${key}" data-key="${key}" type="number" inputmode="${key === 'n' ? 'numeric' : 'decimal'}" min="${zeroOK(key) ? 0 : 1}" step="${key === 'n' ? 1 : 'any'}" required value="${key === 'n' ? spotVal(state.kind, key) : shown(key, spotVal(state.kind, key), state.spot[state.kind]?.[key] === undefined)}"></label>`).join('');
   $('#spotNote').textContent = NOTES[state.kind];
   $('#diagram').innerHTML = DIAGRAM[state.kind];
 }
 
+const zeroOK = (key) => key === 'past' || (state.kind === 'stairs' && key === 'b');
+const isCount = (key) => state.kind === 'stairs' && key === 'n';
 function readForm() {
   const errs = [];
   const num = (el) => { const v = parseFloat(el.value); if (!(v > 0)) { errs.push(el); return NaN; } return toCm(v); };
   const dims = ['L', 'D', 'H'].map((id) => num($('#' + id)));
   const params = {};
-  for (const el of document.querySelectorAll('#spotFields input')) params[el.dataset.key] = el.dataset.key === 'past' ? Math.max(0, toCm(parseFloat(el.value) || 0)) : num(el);
+  for (const el of document.querySelectorAll('#spotFields input')) {
+    const key = el.dataset.key;
+    if (isCount(key)) { const v = parseInt(el.value, 10); if (!(v >= 2 && v <= 30)) errs.push(el); params[key] = v; }
+    else params[key] = zeroOK(key) ? Math.max(0, toCm(parseFloat(el.value) || 0)) : num(el);
+  }
   let shape = null;
   if (state.isSofa) {
     shape = {};
@@ -105,7 +122,7 @@ document.querySelector('#form').addEventListener('input', (e) => {
   if (!(v >= 0) || el.type !== 'number') return;
   if (['L', 'D', 'H'].includes(el.id)) state[el.id] = toCm(v);
   else if (SHAPE_KEYS.includes(el.id)) state.shape = { ...DEFAULT.shape, ...state.shape, [el.id]: toCm(v) };
-  else if (el.dataset.key) state.spot[state.kind] = { ...state.spot[state.kind], [el.dataset.key]: toCm(v) };
+  else if (el.dataset.key) state.spot[state.kind] = { ...state.spot[state.kind], [el.dataset.key]: isCount(el.dataset.key) ? Math.round(v) : toCm(v) };
   save();
 });
 $('#isSofa').addEventListener('change', () => { state.isSofa = $('#isSofa').checked; $('#sofaFields').hidden = !state.isSofa; save(); });
@@ -122,6 +139,12 @@ function check() {
   for (const el of document.querySelectorAll('#form input[type=number]')) el.setAttribute('aria-invalid', errs.includes(el) ? 'true' : 'false');
   if (errs.length) { $('#status').textContent = 'Please fill in every size (numbers above zero).'; errs[0].focus(); return; }
   if (params.doorH && params.doorH > params.ceiling) params.doorH = params.ceiling;
+  if (state.kind === 'stairs') {
+    const p = params, why = p.headroom > p.hc - p.rise ? `The headroom can't be more than the ceiling height less one step (${fmt(p.hc - p.rise)}): over the first step the ceiling is at most that high above it.`
+      : p.headroom < p.hc - p.n * p.rise ? `With ${p.n} steps of ${fmt(p.rise)} the floor above is ${fmt(p.n * p.rise)} up, so the headroom is at least the ceiling height less that (${fmt(p.hc - p.n * p.rise)}). Check the sizes.`
+        : p.rise > p.going * 1.5 || p.rise < 10 ? 'Check the step height and depth: that would be a ladder, or barely a step.' : '';
+    if (why) { $('#status').textContent = why; return; }
+  }
   save();
   if (worker) worker.terminate();
   worker = new Worker('worker.js', { type: 'module' });
@@ -148,7 +171,7 @@ function showResult(m, dims, kind, params) {
   stop();
   if (m.found) {
     v.className = 'verdict good';
-    v.innerHTML = `Yes, it gets through.<span class="sub">With at least 1 cm to spare all round, from the moment it reaches ${kind === 'corner' ? 'the corner' : 'the door'}. Here's how to carry it:</span>`;
+    v.innerHTML = `Yes, it gets through.<span class="sub">With at least 1 cm to spare all round, from the moment it reaches ${SPOT[kind]}. Here's how to carry it:</span>`;
     $('#steps').innerHTML = m.steps.map((s) => `<li>${esc(s)}</li>`).join('');
     $('#showhow').hidden = false;
     setupAnimation(m, dims, kind, params);
@@ -160,7 +183,7 @@ function showResult(m, dims, kind, params) {
       v.innerHTML = `No, this box can't go through this door with 1 cm to spare.<span class="sub">Its shortest side (${fmt(s)}) is wider than the opening less a 1 cm margin each side (${fmt(params.b - 2)}). However you turn it, the line through its middle, across the doorway, is at least that long.</span>`;
     } else if (m.noStart) {
       v.innerHTML = kind === 'roomDoor' ? `No: I found no way to start it through the door.<span class="sub">Check the sizes: in no position I tried does its leading part fit the opening.</span>`
-        : `No: I couldn't fit it into the hallway before ${kind === 'corner' ? 'the corner' : 'the door'}.<span class="sub">In every position I tried that fits under the ceiling, it's wider than the hallway (keeping about 1.5 cm each side).</span>`;
+        : `No: I couldn't fit it into the hallway before ${SPOT[kind]}.<span class="sub">In every position I tried that fits under the ceiling, it's wider than the hallway (keeping about 1.5 cm each side).</span>`;
     } else if (m.capped) {
       v.innerHTML = `I couldn't settle this one.<span class="sub">The search grew too big for a browser before it found a way or ran out of options. It's close either way: measure again carefully.</span>`;
     } else {
@@ -172,7 +195,9 @@ function showResult(m, dims, kind, params) {
 
 function showWider(m, kind) {
   if (m.atLeast) { $('#wider').innerHTML = `The opening would have to be at least ${fmt(m.atLeast)} wide for this box. That much is certain; whether it would be enough, I couldn't settle quickly.`; return; }
-  const what = kind === 'corner' ? `both hallways ${fmt(m.by)} wider (${fmt(m.to[0])} and ${fmt(m.to[1])})` : `a door opening ${fmt(m.by)} wider (${fmt(m.to[0])})`;
+  const what = kind === 'corner' ? `both hallways ${fmt(m.by)} wider (${fmt(m.to[0])} and ${fmt(m.to[1])})`
+    : kind === 'stairs' ? (m.keys.length > 1 ? `the stairs and the hallway at the top both ${fmt(m.by)} wider (${fmt(m.to[0])} and ${fmt(m.to[1])})` : `stairs ${fmt(m.by)} wider (${fmt(m.to[0])})`)
+      : `a door opening ${fmt(m.by)} wider (${fmt(m.to[0])})`;
   $('#wider').innerHTML = `It would get through with ${what}.`;
 }
 
@@ -273,6 +298,15 @@ const DIAGRAM = {
     ${arrow(185, 57, 185, 123)}${tag(203, 90, 'A')}${arrow(150, 40, 168, 40)}${tag(159, 22, 'C')}
     <text x="40" y="95" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">this side</text>
     <text x="20" y="20" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">B: door height, D: ceiling</text>`,
+  stairs: `${DEFS}<path d="M0 150 H60 V137 H82 V124 H104 V111 H126 V98 H148 V85 H170 V72 H320 V170 H0 Z" fill="${W}"/><rect x="0" y="72" width="92" height="12" fill="${W}"/>
+    <line x1="49" y1="150" x2="170" y2="78.5" stroke="#5f6673" stroke-dasharray="3 3"/>
+    ${arrow(25, 86, 25, 148)}${tag(40, 115, 'F')}${arrow(92, 87, 92, 117)}${tag(106, 98, 'E')}
+    ${arrow(150, 98, 172, 98)}${tag(162, 116, 'D')}${arrow(182, 86, 182, 98)}${tag(197, 92, 'C')}
+    <text x="212" y="112" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">B: steps (6 here)</text>
+    <text x="212" y="130" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">A: stair width</text>
+    <text x="212" y="148" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">G: hallway at top</text>
+    <text x="8" y="20" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">From the side. Dashes: the slope through</text>
+    <text x="8" y="36" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">the step edges. E: lowest headroom.</text>`,
 };
 
 renderForm();
