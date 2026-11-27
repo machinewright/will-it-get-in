@@ -42,24 +42,38 @@ const toCm = (v) => (state.unit === 'in' ? v * IN : v);
 const unitWord = () => (state.unit === 'in' ? 'in' : 'cm');
 const fmt = (cm) => (state.unit === 'in' ? `${(cm / IN).toFixed(1)} in` : `${Math.round(cm)} cm`);
 
+function valid(s) {
+  const pos = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0 && v < 5000;
+  if (!s || typeof s !== 'object' || !(s.kind in FIELDS) || !['cm', 'in'].includes(s.unit ?? 'cm')) return false;
+  if (![s.L ?? 1, s.D ?? 1, s.H ?? 1].every(pos)) return false;
+  for (const [k, vals] of Object.entries(s.spot ?? {})) {
+    if (!(k in FIELDS) || typeof vals !== 'object' || vals === null) return false;
+    for (const [key, v] of Object.entries(vals)) if (!FIELDS[k].some((f) => f[0] === key) || !(pos(v) || (key === 'past' && v === 0))) return false;
+  }
+  return true;
+}
 function load() {
   try {
     const m = location.hash.match(/^#c=(.+)$/);
-    if (m) { const s = JSON.parse(decodeURIComponent(m[1])); if (s && s.kind in FIELDS) return { ...DEFAULT, ...s }; }
+    if (m) { const s = JSON.parse(decodeURIComponent(m[1])); if (valid(s)) return { ...DEFAULT, ...s }; }
   } catch { /* ignore */ }
-  try { const s = JSON.parse(localStorage.getItem('will-it-get-in')); if (s && s.kind in FIELDS) return { ...DEFAULT, ...s }; } catch { /* ignore */ }
+  try { const s = JSON.parse(localStorage.getItem('will-it-get-in')); if (valid(s)) return { ...DEFAULT, ...s }; } catch { /* ignore */ }
   return structuredClone(DEFAULT);
 }
 const save = () => { try { localStorage.setItem('will-it-get-in', JSON.stringify(state)); } catch { /* private mode */ } };
 const spotVal = (k, key) => state.spot[k]?.[key] ?? FIELDS[k].find((f) => f[0] === key)[4];
+// Round defaults for people measuring in inches (used while a field still holds its untouched cm default).
+const IN_DEFAULT = { L: 84, D: 36, H: 34, a: 40, b: 32, ceiling: 96, doorH: 80, t: 5, past: 40 };
+const CM_DEFAULT = { L: 200, D: 90, H: 85 };
+function shown(key, cm, isDefault) { return state.unit === 'in' && isDefault && key in IN_DEFAULT ? IN_DEFAULT[key] : show(cm); }
 
 // ---- Form ----
 function renderForm() {
   $('#unit').value = state.unit;
-  for (const id of ['L', 'D', 'H']) $('#' + id).value = show(state[id]);
+  for (const id of ['L', 'D', 'H']) $('#' + id).value = shown(id, state[id], state[id] === CM_DEFAULT[id]);
   document.querySelectorAll('input[name=kind]').forEach((r) => { r.checked = r.value === state.kind; });
   $('#spotFields').innerHTML = FIELDS[state.kind].map(([key, letter, label, hint]) =>
-    `<label><span><b class="tag">${letter}</b> ${label}</span><span class="hint">${hint}</span><input id="f-${key}" data-key="${key}" type="number" inputmode="decimal" min="1" step="any" required value="${show(spotVal(state.kind, key))}"></label>`).join('');
+    `<label><span><b class="tag">${letter}</b> ${label}</span><span class="hint">${hint}</span><input id="f-${key}" data-key="${key}" type="number" inputmode="decimal" min="${key === 'past' ? 0 : 1}" step="any" required value="${shown(key, spotVal(state.kind, key), state.spot[state.kind]?.[key] === undefined)}"></label>`).join('');
   $('#spotNote').textContent = NOTES[state.kind];
   $('#diagram').innerHTML = DIAGRAM[state.kind];
 }
@@ -73,18 +87,17 @@ function readForm() {
   return { dims, params, errs };
 }
 
-$('#unit').addEventListener('change', () => {
-  const { dims, params } = readForm();
-  state.unit = $('#unit').value;
-  if (dims.every(Number.isFinite)) [state.L, state.D, state.H] = dims;
-  state.spot[state.kind] = { ...state.spot[state.kind], ...params };
-  renderForm(); save();
+// Sizes are kept in cm, from what was typed (converted once); switching units only changes the display, so
+// switching back and forth never drifts.
+document.querySelector('#form').addEventListener('input', (e) => {
+  const el = e.target, v = parseFloat(el.value);
+  if (!(v >= 0) || el.type !== 'number') return;
+  if (['L', 'D', 'H'].includes(el.id)) state[el.id] = toCm(v);
+  else if (el.dataset.key) state.spot[state.kind] = { ...state.spot[state.kind], [el.dataset.key]: toCm(v) };
+  save();
 });
-document.querySelectorAll('input[name=kind]').forEach((r) => r.addEventListener('change', () => {
-  const { params } = readForm();
-  state.spot[state.kind] = { ...state.spot[state.kind], ...params };
-  state.kind = r.value; renderForm(); save();
-}));
+$('#unit').addEventListener('change', () => { state.unit = $('#unit').value; renderForm(); save(); });
+document.querySelectorAll('input[name=kind]').forEach((r) => r.addEventListener('change', () => { state.kind = r.value; renderForm(); save(); }));
 
 // ---- Checking ----
 let worker = null, runId = 0, timer = null;
@@ -95,7 +108,7 @@ function check() {
   for (const el of document.querySelectorAll('#form input[type=number]')) el.setAttribute('aria-invalid', errs.includes(el) ? 'true' : 'false');
   if (errs.length) { $('#status').textContent = 'Please fill in every size (numbers above zero).'; errs[0].focus(); return; }
   if (params.doorH && params.doorH > params.ceiling) params.doorH = params.ceiling;
-  [state.L, state.D, state.H] = dims; state.spot[state.kind] = params; save();
+  save();
   if (worker) worker.terminate();
   worker = new Worker('worker.js', { type: 'module' });
   const id = ++runId, t0 = performance.now(), kind = state.kind;
@@ -105,7 +118,8 @@ function check() {
   worker.onmessage = (e) => {
     const m = e.data;
     if (m.id !== id) return;
-    if (m.type === 'result') { $('#go').disabled = false; showResult(m, dims, kind, params); $('#status').textContent = 'Now working out the longest that would get through…'; }
+    if (m.type === 'result') { clearInterval(timer); $('#go').disabled = false; showResult(m, dims, kind, params); $('#status').textContent = m.found ? 'Now working out the longest that would get through…' : 'Now working out what would make it fit…'; }
+    else if (m.type === 'wider') showWider(m, kind);
     else if (m.type === 'longest') { clearInterval(timer); $('#status').textContent = ''; showLongest(m, dims); }
     else if (m.type === 'error') { clearInterval(timer); $('#go').disabled = false; $('#status').textContent = 'Something went wrong: ' + m.message; }
   };
@@ -115,11 +129,12 @@ function check() {
 function showResult(m, dims, kind, params) {
   $('#out').hidden = false;
   const v = $('#verdict');
-  $('#longest').textContent = '';
+  $('#longest').textContent = ''; $('#wider').textContent = '';
+  $('#caveat').hidden = m.found;
   stop();
   if (m.found) {
     v.className = 'verdict good';
-    v.innerHTML = `Yes, it gets through.<span class="sub">With at least 1 cm to spare all round. Here's how to carry it:</span>`;
+    v.innerHTML = `Yes, it gets through.<span class="sub">With at least 1 cm to spare all round, from the moment it reaches ${kind === 'corner' ? 'the corner' : 'the door'}. Here's how to carry it:</span>`;
     $('#steps').innerHTML = m.steps.map((s) => `<li>${esc(s)}</li>`).join('');
     $('#showhow').hidden = false;
     setupAnimation(m, dims, kind, params);
@@ -128,25 +143,33 @@ function showResult(m, dims, kind, params) {
     $('#showhow').hidden = true;
     if (m.doorTooSmall) {
       const s = Math.min(...dims);
-      v.innerHTML = `No, it can't go through this door.<span class="sub">Its shortest side (${fmt(s)}) is wider than the opening less 1 cm each side (${fmt(params.b - 2)}). However you turn it, the line through its middle, across the doorway, is at least that long.</span>`;
+      v.innerHTML = `No, this box can't go through this door with 1 cm to spare.<span class="sub">Its shortest side (${fmt(s)}) is wider than the opening less a 1 cm margin each side (${fmt(params.b - 2)}). However you turn it, the line through its middle, across the doorway, is at least that long.</span>`;
+    } else if (m.noStart) {
+      v.innerHTML = kind === 'roomDoor' ? `No: I found no way to start it through the door.<span class="sub">Check the sizes: in no position I tried does its leading part fit the opening.</span>`
+        : `No: I couldn't fit it into the hallway before ${kind === 'corner' ? 'the corner' : 'the door'}.<span class="sub">In every position I tried that fits under the ceiling, it's wider than the hallway (keeping about 1.5 cm each side).</span>`;
     } else if (m.capped) {
       v.innerHTML = `I couldn't settle this one.<span class="sub">The search grew too big for a browser before it found a way or ran out of options. It's close either way: measure again carefully.</span>`;
     } else {
-      v.innerHTML = `No: I found no way to get it through.<span class="sub">The search tried every way of sliding, turning, tilting and standing it on end, in small steps, keeping 1 cm from everything. A way that needs less room to spare than that could still exist, so if it's close, measure again.</span>`;
+      v.innerHTML = `No: I found no way to get it through.<span class="sub">The search tried every way of sliding, turning, tilting and standing it on end, in small steps, keeping about 1.5 cm from everything at each step. A way that needs less room to spare than that could still exist, so if it's close, measure again.</span>`;
     }
   }
   v.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
 
+function showWider(m, kind) {
+  const what = kind === 'corner' ? `both hallways ${fmt(m.by)} wider (${fmt(m.to[0])} and ${fmt(m.to[1])})` : `a door opening ${fmt(m.by)} wider (${fmt(m.to[0])})`;
+  $('#wider').innerHTML = `It would get through with ${what}.`;
+}
+
 function showLongest(m, dims) {
   const what = `with this depth (${fmt(dims[1])}) and height (${fmt(dims[2])})`;
   let t;
-  if (m.value) t = `The longest box ${what} that gets through here: <b>${fmt(m.value)}</b>.`;
+  if (m.value) t = `A box ${what} gets through here up to <b>${fmt(m.value)}</b> long. (I found a way at that length, and none a centimetre longer.)`;
   else if (m.atLeast) t = `Anything ${what} gets through here up to at least <b>${fmt(m.atLeast)}</b> long.`;
-  else if (m.between) t = `The longest box ${what} that gets through here is between ${fmt(m.between[0])} and ${fmt(m.between[1])} (the search got too big to narrow it down).`;
-  else if (m.none) t = `At this depth and height, no length gets through: not even ${fmt(m.floor)}. It's the depth or height that has to give.`;
+  else if (m.between) t = `A box ${what} gets through here up to at least ${fmt(m.between[0])} long; I couldn't settle lengths between that and ${fmt(m.between[1])} (the search got too big).`;
+  else if (m.none || m.skip) t = '';
   else t = 'I couldn\'t work out the longest that would get through (the search got too big).';
-  $('#longest').innerHTML = t;
+  $('#longest').innerHTML = t; $('#longest').hidden = !t;
 }
 
 // ---- Animation ----
@@ -228,11 +251,11 @@ const DIAGRAM = {
     ${arrow(52, 150, 128, 150)}${tag(90, 135, 'A')}${arrow(160, 72, 160, 128)}${tag(178, 100, 'B')}
     ${arrow(130, 60, 146, 60)}${tag(138, 44, 'D')}${arrow(115, 10, 115, 68)}${tag(100, 40, 'E')}
     <text x="190" y="160" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">room</text>
-    <text x="170" y="40" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">C: door height, F: ceiling</text>`,
+    <text x="160" y="40" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">C: door height, F: ceiling</text>`,
   roomDoor: `${DEFS}<rect x="150" y="0" width="18" height="55" fill="${W}"/><rect x="150" y="125" width="18" height="45" fill="${W}"/>
     ${arrow(185, 57, 185, 123)}${tag(203, 90, 'A')}${arrow(150, 40, 168, 40)}${tag(159, 22, 'C')}
     <text x="40" y="95" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">this side</text>
-    <text x="225" y="150" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">B: door height, D: ceiling</text>`,
+    <text x="190" y="160" style="${T}; font-weight:400; font-size:12px; fill:#5f6673">B: door height, D: ceiling</text>`,
 };
 
 renderForm();

@@ -5,7 +5,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { solve, reachOf } from '../src/plan.js';
+import { solve, reachOf, smooth } from '../src/plan.js';
+import { describe } from '../src/describe.js';
 import { corner, sideDoor, roomDoor } from '../src/scene.js';
 import { HOLDS } from '../src/geom.js';
 
@@ -126,9 +127,15 @@ test('hand cases', () => {
   let { r, scene } = run(d, (reach) => corner({ a: 80, b: 80, ceiling: 240, reach }));
   assert.equal(r.found, true);
   assert.equal(verifyPath(r, d, scene), null);
-  // Under 205 cm it can't stand up, and tilting it far enough to shorten its footprint below the hallway's width
-  // would need more height than that (at 55 degrees it is already 204 cm tall and 172 cm long on the floor).
-  ({ r } = run(d, (reach) => corner({ a: 80, b: 80, ceiling: 205, reach })));
+  // Under 205 cm it can't be stood up here (that takes 211.9 cm), but it may arrive already on its end (from
+  // outside, say), and then it slides round.
+  ({ r, scene } = run(d, (reach) => corner({ a: 80, b: 80, ceiling: 205, reach })));
+  assert.equal(r.found, true);
+  assert.equal(verifyPath(r, d, scene), null);
+  // Under 199 cm it can't be on its end at all (200 + 1.5 cm). Lifting one end is limited to about 49 degrees
+  // (200 sin + 70 cos <= 197.5), when it is still 184 cm long on the floor; on its back or side it is 70 or 75 cm
+  // wide, so in 77 cm it can only slide, never turn. No way.
+  ({ r } = run(d, (reach) => corner({ a: 80, b: 80, ceiling: 199, reach })));
   assert.equal(r.found, false);
 
   // Through an 80 cm door between two rooms: 180 x 75 x 75 goes through flat.
@@ -151,6 +158,26 @@ test('hand cases', () => {
   // The same box from a 100 cm hallway through an 80 cm side door: the same argument, the same answer.
   ({ r } = run(d, (reach) => sideDoor({ a: 100, b: 80, doorH: 200, t: 10, past: 100, ceiling: 240, reach })));
   assert.equal(r.found, false);
+
+  // A wardrobe 230 cm tall under a 220 cm ceiling can't stand upright, but it arrives lying down and goes round a
+  // wide corner lying down (found by an audit: only upright starts were allowed).
+  d = [100, 50, 230];
+  ({ r, scene } = run(d, (reach) => corner({ a: 150, b: 150, ceiling: 220, reach })));
+  assert.equal(r.found, true);
+  assert.equal(verifyPath(r, d, scene), null);
+});
+
+test('steps say "lower" when the route lowers it', () => {
+  // From the audit: this route stands it on end, then lowers it to about 55 degrees and on down.
+  const d = [200, 80, 75];
+  const scene = sideDoor({ a: 110, b: 85, doorH: 200, t: 12, past: 0, ceiling: 240, reach: reachOf(d) });
+  const r = solve(d, scene);
+  assert.equal(r.found, true);
+  const path = smooth(d, scene, r.path);
+  const steps = describe(r.before, path, scene.spot);
+  // Whatever the wording, a step that lifts must come before the end goes down, never after standing it on end.
+  const iEnd = steps.findIndex((t) => /on its end/.test(t));
+  if (iEnd >= 0) for (const t of steps.slice(iEnd + 1)) assert.doesNotMatch(t, /^Lift/, steps.join(' / '));
 });
 
 test('every way found in random scenes passes the independent check', () => {
@@ -159,12 +186,14 @@ test('every way found in random scenes passes the independent check', () => {
   for (let i = 0; i < 24; i++) {
     const L = 120 + Math.round(rnd() * 110), D = 50 + Math.round(rnd() * 50), H = 40 + Math.round(rnd() * 50);
     const dims = [L, D, H], ceiling = 200 + Math.round(rnd() * 60);
-    const mk = i % 2 ? (reach) => corner({ a: 75 + Math.round(rnd() * 50), b: 75 + Math.round(rnd() * 50), ceiling, reach })
+    const mk = i % 3 === 2 ? (reach) => roomDoor({ b: 70 + Math.round(rnd() * 25), doorH: 190 + Math.round(rnd() * 20), t: 1 + Math.round(rnd() * 25), ceiling, reach })
+      : i % 3 === 1 ? (reach) => corner({ a: 75 + Math.round(rnd() * 50), b: 75 + Math.round(rnd() * 50), ceiling, reach })
       : (reach) => sideDoor({ a: 80 + Math.round(rnd() * 60), b: 70 + Math.round(rnd() * 25), doorH: 190 + Math.round(rnd() * 20), t: 8 + Math.round(rnd() * 20), past: Math.round(rnd() * 150), ceiling, reach });
     const { r, scene } = run(dims, mk);
     if (!r.found) continue;
     found++;
     assert.equal(verifyPath(r, dims, scene), null, `case ${i}: ${dims} in ${scene.kind}`);
+    assert.equal(verifyPath({ ...r, path: smooth(dims, scene, r.path) }, dims, scene), null, `case ${i} smoothed: ${dims} in ${scene.kind}`);
   }
   assert.ok(found >= 8, `only ${found} of 24 random cases had a way: the check needs more`);
 });

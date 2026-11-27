@@ -141,8 +141,8 @@ export function solve(dims, scene, opts = {}) {
     return true;
   }
 
-  // Which orientations can the box be turned into in open space under this ceiling, starting upright (height
-  // axis vertical)? Only those are allowed when it enters. Turning about the vertical and changing hold are free
+  // Which orientations can the box be turned into in open space under this ceiling, starting from resting on one
+  // of its sides? Only those are allowed when it enters. Turning about the vertical and changing hold are free
   // there. Tilting a hold's axis up to pitch p makes the box dims[a] sin p + dims[v] cos p tall (whatever the yaw),
   // which peaks at the diagonal sqrt(dims[a]^2 + dims[v]^2) when tan p = dims[a] / dims[v]: so a tilt from p0 to
   // p1 fits exactly when that height stays under the ceiling over the whole range.
@@ -153,7 +153,8 @@ export function solve(dims, scene, opts = {}) {
     return peak > lo && peak < hi ? Math.hypot(A, V) : Math.max(A * Math.sin(lo) + V * Math.cos(lo), A * Math.sin(hi) + V * Math.cos(hi));
   };
   const enterHP = new Uint8Array(NH * NP), fromHP = new Int32Array(NH * NP).fill(-1), todo = []; // by hold and pitch
-  for (let h = 0; h < NH; h++) if (HOLDS[h].v === 2 && dims[2] <= limit) { enterHP[h * NP] = 1; todo.push(h * NP); }
+  // It can arrive resting on any side (upright, on its back, on its end...), if that fits under the ceiling.
+  for (let h = 0; h < NH; h++) if (dims[HOLDS[h].v] <= limit) { enterHP[h * NP] = 1; todo.push(h * NP); }
   for (let qi = 0; qi < todo.length; qi++) {
     const k = todo[qi], h = Math.floor(k / NP), p = k % NP;
     const next = [];
@@ -294,7 +295,12 @@ export function smooth(dims, scene, path, opts = {}) {
   let i = 0;
   while (i < path.length - 1) {
     let j = Math.min(path.length - 1, i + 60);
-    while (j > i + 1 && !(path[j].hold === path[i].hold && sameHoldRun(path, i, j) && straightClear(dims, scene, path[i], path[j], opts))) j = i + 1 + Math.floor((j - i - 1) / 2);
+    // (A straight move may tilt or walk, but not tilt slowly over a long walk: that's not how people carry, and the
+    // steps would describe it wrongly.)
+    const ok = (j) => path[j].hold === path[i].hold && sameHoldRun(path, i, j)
+      && (Math.abs(path[j].pitch - path[i].pitch) < 1e-6 || Math.hypot(path[j].x - path[i].x, path[j].y - path[i].y) <= 30)
+      && straightClear(dims, scene, path[i], path[j], opts);
+    while (j > i + 1 && !ok(j)) j = i + 1 + Math.floor((j - i - 1) / 2);
     out.push(path[j]);
     i = j;
   }

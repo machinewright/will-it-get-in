@@ -29,9 +29,9 @@ const sameKind = (p, q) => p.kind === q.kind || (p.kind.startsWith('lift') && q.
 export function describe(before, path, spot = 'the tight spot') {
   const steps = [];
   const P = path.map((p) => ({ ...p, post: posture(p) }));
-  if (before && before.length > 1) {
-    const last = posture({ hold: before.at(-1).hold, yaw: 0, pitch: before.at(-1).pitch });
-    steps.push(`Before it goes in, where there's room, get it ${last.text}.`);
+  // Say how to get it into its starting position only when that's more than lifting an end a little.
+  if (before && before.length > 1 && !(P[0].post.kind === 'lift' && P[0].post.lift <= 30)) {
+    steps.push(`Before it goes in, where there's room, get it ${P[0].post.text}.`);
   }
   steps.push(`Bring it up to ${spot} ${P[0].post.text}.`);
   // Phases: runs of the same kind of hold (all the lifted ones count as one run, however high).
@@ -57,8 +57,10 @@ export function describe(before, path, spot = 'the tight spot') {
 function enter(prev, a, b) {
   const to = a.post, end = b.post;
   if (to.kind.startsWith('lift')) {
-    const which = frontOrBack(a, b);
+    const which = frontOrBack(a, b), from = prev.post;
+    const fromLift = from.kind === 'end' ? 90 : from.lift ?? 0;
     const top = Math.max(to.lift, end.lift ?? 0);
+    if (fromLift > to.lift) return `Lower it from ${from.kind === 'end' ? 'its end' : 'there'}, so one end is about ${to.lift}° up${end.lift !== undefined && end.lift < to.lift - 10 ? `, then on down to about ${end.lift}°` : ''}.`;
     if (end.lift !== undefined && end.lift < to.lift - 10) return `Lift the ${which} end to about ${to.lift}°, then lower it to about ${end.lift}° as you go.`;
     return `Lift the ${which} end${top > to.lift + 10 ? `, gradually, to about ${top}°` : ` to about ${top}°`}.`;
   }

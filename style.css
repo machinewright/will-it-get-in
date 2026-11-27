@@ -73,3 +73,4 @@ button:disabled { opacity: .55; cursor: progress; }
   #view { height: 300px; }
 }
 .tag { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--ink); color: #fff; font: 600 12px/1 var(--sans); margin-right: 3px; vertical-align: 1px; }
+.longest:empty { display: none; }

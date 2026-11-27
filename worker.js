@@ -16,11 +16,24 @@ self.onmessage = (e) => {
     const r = solve(dims, scene, SOLVE);
     const path = r.found ? smooth(dims, scene, r.path) : null;
     self.postMessage({
-      id, type: 'result', found: r.found, capped: r.capped, doorTooSmall: !!r.doorTooSmall, explored: r.explored,
+      id, type: 'result', found: r.found, capped: r.capped, noStart: !r.found && !r.doorTooSmall && r.seeds === 0, doorTooSmall: !!r.doorTooSmall, explored: r.explored,
       ms: Math.round(performance.now() - t0), path, before: r.before ?? null,
       steps: r.found ? describe(r.before, path, scene.spot) : null,
     });
+    // When it doesn't get through: how much wider the tight spot would have to be (both hallways at a corner, the
+    // door opening at a door), to the nearest cm.
+    if (!r.found && !r.capped) {
+      const keys = kind === 'corner' ? ['a', 'b'] : ['b'];
+      const wider = (k) => { const pp = { ...params }; for (const key of keys) pp[key] += k; const q = solve(dims, sceneFor(kind, pp, dims), SOLVE); return q.capped ? null : q.found; };
+      let lo = 0, hi = null;
+      for (let k = r.doorTooSmall ? Math.ceil(Math.min(...dims) + 2 - params.b) : 5; k <= 160; k += 10) { const f = wider(k); if (f === null) break; if (f) { hi = k; break; } lo = k; }
+      if (hi !== null) {
+        while (hi - lo > 1) { const mid = Math.round((lo + hi) / 2), f = wider(mid); if (f === null) break; if (f) hi = mid; else lo = mid; }
+        self.postMessage({ id, type: 'wider', by: hi, keys, to: keys.map((k2) => params[k2] + hi) });
+      }
+    }
     // The longest box with the same depth and height that gets through (to the nearest cm), by halving.
+    if (dims[0] < Math.max(dims[1], dims[2])) { self.postMessage({ id, type: 'longest', skip: true }); return; } // length isn't the longest side
     const fits = (len) => { const d = [len, dims[1], dims[2]]; const q = solve(d, sceneFor(kind, params, d), SOLVE); return q.capped ? null : q.found; };
     const floor = Math.max(dims[1], dims[2]);
     let lo, hi;

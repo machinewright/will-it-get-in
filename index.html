@@ -29,7 +29,7 @@ Anthropic) · November 2026 · <a href="#how">How it works</a></p>
   <div class="unitrow"><h3 id="h-item">The furniture</h3>
     <label class="unit">Units <select id="unit"><option value="cm">cm</option><option value="in">inches</option></select></label></div>
   <div class="grid3" role="group" aria-labelledby="h-item">
-    <label>Length <span class="hint">longest side (a sofa's width)</span><input id="L" type="number" inputmode="decimal" min="10" step="any" required></label>
+    <label>Length <span class="hint">longest side: the "W" on a shop page</span><input id="L" type="number" inputmode="decimal" min="10" step="any" required></label>
     <label>Depth <span class="hint">front to back</span><input id="D" type="number" inputmode="decimal" min="10" step="any" required></label>
     <label>Height <span class="hint">floor to top</span><input id="H" type="number" inputmode="decimal" min="10" step="any" required></label>
   </div>
@@ -61,7 +61,11 @@ Anthropic) · November 2026 · <a href="#how">How it works</a></p>
     </div>
     <ol id="steps"></ol>
   </div>
-  <p id="longest" class="longest"></p>
+  <p id="wider" class="longest" aria-live="polite"></p>
+  <p id="longest" class="longest" aria-live="polite"></p>
+  <p id="caveat" class="small" hidden>That's for a box this size. A sofa may still manage where its box can't: legs often
+  come off (enter the height without them), and movers use the gaps around arms and backs. See <a href="#how">how it
+  works</a>.</p>
   <p class="small">Your numbers stay in this browser. <button type="button" id="share" class="linkish">Copy a link to this check</button></p>
 </section>
 
@@ -69,18 +73,23 @@ Anthropic) · November 2026 · <a href="#how">How it works</a></p>
 <h2>How it works</h2>
 <p>It treats the furniture as a box with the sizes you give, and your hallway and door as walls, a door frame and a
 ceiling. Then it searches for a way to move the box through: sliding it, turning it, lifting one end and tilting it,
-standing it on end, laying it on its back, in steps of 2.5&nbsp;cm and 2.5°. Every move between steps is checked at
-points close enough together that the box keeps at least 1&nbsp;cm from every wall, the door frame and the ceiling the
-whole way. So when it shows you a way, that way works for the box, with a centimetre to spare all round.</p>
-<p>When it finds no way, that is not quite a proof: a way could squeeze between its steps. For the case where it can
-be checked exactly (carrying a box flat round a corner, which has a known answer you can work out by hand) it agrees
-to within a centimetre, and it never claims a way where there isn't one. For a door it also uses a rule that is
-exact: at the moment the box's middle passes through the doorway, the line through its middle across the doorway is
-inside the opening, and every such line through a box is at least as long as its shortest side. So if the shortest
-side is wider than the doorway (less a centimetre each side), nothing will get it through.</p>
-<p>It assumes the box arrives at the tight spot from somewhere with room to turn it (outside, or a room), and that you
-can tip it there if the ceiling allows. It doesn't know about radiators, light fittings, banisters or a door that
-doesn't open fully: measure the narrowest point, with the door open. Stairs aren't covered yet.</p>
+standing it on end, laying it on its back, in steps of 2.5&nbsp;cm and 2.5°. At every step the box is at least
+1.5&nbsp;cm from every wall, the door frame and the ceiling, and between steps it is checked at points so close
+together that no part of it moves more than half a centimetre unchecked. So when it shows you a way, that way works
+for the box with at least a centimetre to spare all round, from the moment it reaches the corner or door.</p>
+<p>It assumes the box can get that far: that it arrives from somewhere with room to turn it (outside, or a room),
+resting on any of its sides, and that it can be tipped there if the ceiling allows (one end at a time, as people do).
+It doesn't know about radiators, light fittings, banisters or a door that doesn't open fully: measure the narrowest
+point, with the door open. Stairs aren't covered yet.</p>
+<p>When it finds no way, that is not a proof: a way could squeeze between its steps, or need less than 1.5&nbsp;cm to
+spare. Carrying a box flat round a corner has an exact answer you can work out by hand; on the tests the search agrees
+with it to within a centimetre, and it never found a way that the exact answer rules out. Some doors are settled
+without searching, by a rule that is certain: at the moment the box's middle passes through the doorway, the line
+through its middle across the doorway is inside the opening, and every such line through a box is at least as long
+as its shortest side. So if the shortest side is wider than the doorway less a centimetre each side, no way of
+turning that box gets it through with that centimetre to spare.</p>
+<p>The "what would fit" lines come from the same search: a box that long, or a hallway or door that wide, is one it
+found a way for, and a centimetre more is one it didn't.</p>
 <p><strong>A real sofa isn't a box.</strong> If the box gets through, the sofa does too, since it fits inside the
 box. If the box doesn't, the sofa still might: arms and backs leave gaps that movers use (tilting the back through a
 door first, hooking an arm round the frame), and this tool can't see those. If the legs come off, enter the height
