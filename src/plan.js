@@ -12,7 +12,7 @@
 
 import { HOLDS, rotation, rotationInto, orient, clear, extent } from './geom.js';
 
-export const DEFAULTS = { greed: 2, step: 2.5, yawSteps: 144, pitchSteps: 36, margin: 1, slack: 0.5, maxStates: 30e6 };
+export const DEFAULTS = { greed: 2, step: 2.5, yawSteps: 144, pitchSteps: 36, margin: 1, slack: 0.5, maxStates: 6e6 };
 
 export function reachOf(dims) { return Math.hypot(dims[0], dims[1], dims[2]) / 2; }
 
@@ -268,3 +268,36 @@ export function solve(dims, scene, opts = {}) {
   }
   return result;
 }
+
+// Is the straight move from pose A to pose B (same hold) clear by margin all the way? Checked the same way as the
+// search's moves: points close enough together that nothing travels more than 2 x slack between them.
+export function straightClear(dims, scene, A, B, opts = {}) {
+  const { margin, slack } = { ...DEFAULTS, ...opts }, m = margin + slack, reach = reachOf(dims);
+  if (A.hold !== B.hold) return false;
+  let dy = B.yaw - A.yaw; if (dy > Math.PI) dy -= 2 * Math.PI; if (dy < -Math.PI) dy += 2 * Math.PI;
+  const dp = B.pitch - A.pitch, dx = B.x - A.x, dyy = B.y - A.y;
+  const travel = Math.hypot(dx, dyy) + reach * Math.abs(dy) + 2.8 * reach * Math.abs(dp);
+  const k = Math.max(1, Math.ceil(travel / (2 * slack)));
+  const R = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  let o;
+  for (let i = 0; i <= k; i++) {
+    const t = i / k;
+    o = orient(dims, rotationInto(R, HOLDS[A.hold], A.yaw + t * dy, A.pitch + t * dp), o);
+    if (!clear(scene, o, A.x + t * dx, A.y + t * dyy, m)) return false;
+  }
+  return true;
+}
+
+// Replace runs of grid moves by single straight moves where those are clear too (the grid zigzags; people don't).
+export function smooth(dims, scene, path, opts = {}) {
+  const out = [path[0]];
+  let i = 0;
+  while (i < path.length - 1) {
+    let j = Math.min(path.length - 1, i + 60);
+    while (j > i + 1 && !(path[j].hold === path[i].hold && sameHoldRun(path, i, j) && straightClear(dims, scene, path[i], path[j], opts))) j = i + 1 + Math.floor((j - i - 1) / 2);
+    out.push(path[j]);
+    i = j;
+  }
+  return out;
+}
+const sameHoldRun = (P, i, j) => { for (let k = i + 1; k <= j; k++) if (P[k].hold !== P[i].hold) return false; return true; };

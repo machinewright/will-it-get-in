@@ -16,7 +16,8 @@ export function corner({ a, b, ceiling, reach }) {
     { x0: X, x1: X + T, y0: 0, y1: b, zb: 0 },               // far end of the second hallway (scene edge)
   ];
   return {
-    kind: 'corner', ceiling, blocks,
+    kind: 'corner', spot: 'the corner', ceiling, blocks,
+    window: { x0: -25, x1: a + 1.3 * reach, y0: -1.3 * reach, y1: b + 25 }, viewFrom: -Math.PI / 2 - 0.55,
     bounds: { x0: 0, x1: X, y0: -Y, y1: b },
     snap: { x: 0, y: b }, // the outside walls: the tightest ways round press against them
     seed: { x: a / 2, y: -Y + reach + 5 }, // deep in the first hallway: any pose that fits the hallway is clear of its end
@@ -45,7 +46,8 @@ export function sideDoor({ a, b, doorH, t, past, ceiling, reach }) {
     { x0: x2, x1: x2 + R, y0: R, y1: R + T, zb: 0 },
   ];
   return {
-    kind: 'sideDoor', ceiling, blocks, door: { width: b, height: doorH, depth: t },
+    kind: 'sideDoor', spot: 'the door', ceiling, blocks,
+    window: { x0: -25, x1: x2 + reach, y0: -1.2 * reach, y1: b + Math.min(past, reach) + 25 }, viewFrom: Math.PI + 0.5, door: { width: b, height: doorH, depth: t },
     // Once the centre is more than `reach` into the room the whole box is in, so the grid stops there.
     bounds: { x0: 0, x1: x2 + reach + 10, y0: -Y, y1: Math.max(b + past, b + reach + 10) },
     snap: { x: 0, y: b }, // the hallway's far wall and the door's far jamb
@@ -71,7 +73,8 @@ export function roomDoor({ b, doorH, t, ceiling, reach }) {
     { x0: 0, x1: t, y0: 0, y1: b, zb: doorH },    // wall above the door
   ];
   return {
-    kind: 'roomDoor', ceiling, blocks, openStart: true, door: { width: b, height: doorH, depth: t },
+    kind: 'roomDoor', spot: 'the door', ceiling, blocks,
+    window: { x0: -reach, x1: t + reach, y0: -0.8 * reach, y1: b + 0.8 * reach }, viewFrom: Math.PI + 0.6, openStart: true, door: { width: b, height: doorH, depth: t },
     // Any pose touching the doorway has its centre within `reach` of the opening.
     bounds: { x0: -r, x1: t + r, y0: -r, y1: b + r },
     snap: { x: t, y: b },

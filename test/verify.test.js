@@ -94,8 +94,11 @@ export function verifyPath(r, dims, scene, e = 0.6) {
       if (!sameShape(frame({ ...A, x: 0, y: 0 }, dims), frame({ ...B, x: 0, y: 0 }, dims))) return `pose ${i}: hold change with a different orientation`;
     }
     let dy = B.yaw - A.yaw; if (dy > Math.PI) dy -= 2 * Math.PI; if (dy < -Math.PI) dy += 2 * Math.PI;
-    for (let k = 1; k < 12; k++) {
-      const t = k / 12;
+    // Sub-steps: at most 0.5 cm of travel for any point of the box between them.
+    const R0 = Math.hypot(...dims) / 2;
+    const K = Math.max(12, Math.ceil((Math.hypot(B.x - A.x, B.y - A.y) + R0 * Math.abs(dy) + 3 * R0 * Math.abs(B.pitch - A.pitch)) / 0.5));
+    for (let k = 1; k < K; k++) {
+      const t = k / K;
       const pose = A.hold !== B.hold ? { ...A, x: A.x + t * (B.x - A.x), y: A.y + t * (B.y - A.y) }
         : { hold: A.hold, x: A.x + t * (B.x - A.x), y: A.y + t * (B.y - A.y), yaw: A.yaw + t * dy, pitch: A.pitch + t * (B.pitch - A.pitch) };
       const why2 = poseOK(frame(pose, dims), scene, edgePts, e);
