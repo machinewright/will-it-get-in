@@ -103,3 +103,4 @@ export function clear(scene, o, x, y, m) {
 
 // Floor-plan extent of the box at (x, y): used for "is it fully in the hallway / the room yet?".
 export const extent = (o, x, y) => ({ minx: x + o.minx, maxx: x + o.maxx, miny: y + o.miny, maxy: y + o.maxy });
+

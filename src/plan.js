@@ -12,7 +12,7 @@
 
 import { HOLDS, rotation, rotationInto, orient, clear, extent } from './geom.js';
 
-export const DEFAULTS = { step: 2.5, yawSteps: 144, pitchSteps: 36, margin: 1, slack: 0.5, maxStates: 30e6 };
+export const DEFAULTS = { greed: 2, step: 2.5, yawSteps: 144, pitchSteps: 36, margin: 1, slack: 0.5, maxStates: 30e6 };
 
 export function reachOf(dims) { return Math.hypot(dims[0], dims[1], dims[2]) / 2; }
 
@@ -81,15 +81,16 @@ export function solve(dims, scene, opts = {}) {
   const markBlocked = (id, pos) => { (blocked[id] ?? (blocked[id] = new Int32Array(words)))[pos >>> 5] |= 1 << (pos & 31); };
 
   // Queue of states (orientation, position) with parents, for the way back.
-  let cap = 1 << 16, qo = new Int32Array(cap), qp = new Int32Array(cap), par = new Int32Array(cap), n = 0;
-  function push(id, pos, parent) {
-    if (n === cap) { cap *= 2; for (const nm of ['qo', 'qp', 'par']) { const g = new Int32Array(cap); g.set(nm === 'qo' ? qo : nm === 'qp' ? qp : par); if (nm === 'qo') qo = g; else if (nm === 'qp') qp = g; else par = g; } }
-    qo[n] = id; qp[n] = pos; par[n] = parent; mark(id, pos); hpush(n, togo(id, pos)); n++;
+  let cap = 1 << 16, qo = new Int32Array(cap), qp = new Int32Array(cap), par = new Int32Array(cap), gc = new Float64Array(cap), n = 0;
+  const grow = (a) => { const b = new a.constructor(cap); b.set(a); return b; };
+  function push(id, pos, parent, g) {
+    if (n === cap) { cap *= 2; qo = grow(qo); qp = grow(qp); par = grow(par); gc = grow(gc); }
+    qo[n] = id; qp[n] = pos; par[n] = parent; gc[n] = g; mark(id, pos); hpush(n, g + o.greed * togo(id, pos)); n++;
   }
   const X = (id, pos) => px[pos] + ori(id).offx, Y = (id, pos) => py[pos] + ori(id).offy;
-  // Best-first: always expand the pose nearest the goal (by the scene's measure of how far the box still has to
-  // go), so a way is usually found long before everything is explored. When there is no way, everything reachable
-  // gets explored either way.
+  // Search order: A* weighted towards the goal (expand the pose with the least distance travelled + greed x the
+  // scene's measure of how far it still has to go), so a way is usually found long before everything is explored.
+  // When there is no way, everything reachable gets explored either way, so the answer doesn't depend on the order.
   let heap = new Int32Array(1 << 16), hkey = new Float64Array(1 << 16), hn = 0;
   function hpush(i, k) {
     if (hn === heap.length) { const a = new Int32Array(hn * 2); a.set(heap); heap = a; const b = new Float64Array(hn * 2); b.set(hkey); hkey = b; }
@@ -151,27 +152,62 @@ export function solve(dims, scene, opts = {}) {
     const lo = Math.min(p0, p1), hi = Math.max(p0, p1);
     return peak > lo && peak < hi ? Math.hypot(A, V) : Math.max(A * Math.sin(lo) + V * Math.cos(lo), A * Math.sin(hi) + V * Math.cos(hi));
   };
-  const enterHP = new Uint8Array(NH * NP), todo = []; // by hold and pitch (yaw doesn't matter)
+  const enterHP = new Uint8Array(NH * NP), fromHP = new Int32Array(NH * NP).fill(-1), todo = []; // by hold and pitch
   for (let h = 0; h < NH; h++) if (HOLDS[h].v === 2 && dims[2] <= limit) { enterHP[h * NP] = 1; todo.push(h * NP); }
-  while (todo.length) {
-    const k = todo.pop(), h = Math.floor(k / NP), p = k % NP;
+  for (let qi = 0; qi < todo.length; qi++) {
+    const k = todo[qi], h = Math.floor(k / NP), p = k % NP;
     const next = [];
     for (const q of [p - 1, p + 1]) if (q >= 0 && q < NP && tallest(HOLDS[h], p * dPitch, q * dPitch) <= limit) next.push(h * NP + q);
     if (p === 0 || p === NP - 1) for (const j of same.get(oid(h, 0, p)) ?? []) next.push(Math.floor(j / (NP * NY)) * NP + p);
-    for (const j of next) if (!enterHP[j]) { enterHP[j] = 1; todo.push(j); }
+    for (const j of next) if (!enterHP[j]) { enterHP[j] = 1; fromHP[j] = k; todo.push(j); }
   }
   const enter = (id) => enterHP[Math.floor(id / (NP * NY)) * NP + (id % NP)] === 1;
 
-  // Seeds: every clear pose on one row deep in the place the box comes from, in an orientation it can enter in.
-  const jSeed = Math.round((scene.seedY - y0) / step);
+  // Quick "no" for a doorway: while the box goes through, there is a moment when its centre is in the doorway's
+  // plane, and the line through the centre across the doorway then lies in the opening. Every line through a box's
+  // centre, between two faces, is at least as long as the box's smallest side. So if the smallest side is wider
+  // than the opening (less the clearance on both sides), no way exists, and there's no need to search.
+  if (scene.door && Math.min(...dims) > scene.door.width - 2 * margin) {
+    return { found: false, explored: 0, seeds: 0, capped: false, path: null, doorTooSmall: true };
+  }
+
+  if (scene.openStart) {
+    // Open start: seeds are the poses just entering the doorway (the part past the wall's face must be within the
+    // opening), every orientation it can enter in. Poses entirely in front of the wall are never expanded.
+    const { x: wx, y0: oy0, y1: oy1 } = scene.opening;
+    for (let id = 0; id < NO; id++) {
+      if (!enter(id)) continue;
+      const oo = ori(id), v = oo.verts;
+      let lo = Infinity, hi = -Infinity; // y range of the leading corners
+      for (let k = 0; k < 8; k++) if (v[3 * k] >= oo.maxx - 1.5 * step) { lo = Math.min(lo, v[3 * k + 1]); hi = Math.max(hi, v[3 * k + 1]); }
+      for (let i = 0; i < GW; i++) {
+        const xc = x0 + i * step + oo.offx;
+        if (xc + oo.maxx <= wx || xc + oo.maxx > wx + 1.5 * step) continue;
+        const ya = oy0 + m - lo, yb = oy1 - m - hi;
+        for (let j = Math.max(0, Math.floor((ya - oo.offy - y0) / step)); j < GH; j++) {
+          const yc = y0 + j * step + oo.offy;
+          if (yc > yb) break;
+          const pos = posAt[i + j * GW];
+          if (pos < 0 || isSeen(id, pos)) continue;
+          if (free(id, pos)) push(id, pos, -1, reach * ((id % NP) * dPitch + (HOLDS[Math.floor(id / (NP * NY))].v === 2 ? 0 : Math.PI / 2)));
+        }
+      }
+    }
+  } else {
+  // Seeds: every clear pose in an orientation it can enter in, on the centre line deep in the hallway it comes from
+  // (a pose that fits a straight hallway anywhere fits it centred; a cell either side allows for the grid).
+  const jSeed = Math.round((scene.seed.y - y0) / step), iSeed = Math.round((scene.seed.x - x0) / step);
   for (let id = 0; id < NO; id++) {
     const oo = ori(id);
     if (!enter(id)) continue;
-    for (let i = 0; i < GW; i++) {
-      const pos = posAt[i + jSeed * GW];
+    for (let i = iSeed - 1; i <= iSeed + 1; i++) {
+      const pos = i >= 0 && i < GW ? posAt[i + jSeed * GW] : -1;
       if (pos < 0 || isSeen(id, pos)) continue;
-      if (scene.start(extent(oo, X(id, pos), Y(id, pos))) && free(id, pos)) push(id, pos, -1);
+      // Starting tilted or on its side costs the tipping it took, so the easiest way wins when there are several.
+      const pe = id % NP, he = Math.floor(id / (NP * NY)), tip = reach * (pe * dPitch + (HOLDS[he].v === 2 ? 0 : Math.PI / 2));
+      if (scene.start(extent(oo, X(id, pos), Y(id, pos))) && free(id, pos)) push(id, pos, -1, tip);
     }
+  }
   }
   const seeds = n;
 
@@ -191,7 +227,8 @@ export function solve(dims, scene, opts = {}) {
       // Around the same centre, and around the cell that keeps the box's left and far edges where they are.
       const si = Math.round((me0.offx + me0.minx - no.offx - no.minx) / step), sj = Math.round((me0.offy + me0.maxy - no.offy - no.maxy) / step);
       for (const [ci, cj] of si || sj ? [[0, 0], [si, sj]] : [[0, 0]]) {
-        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        const R = (dy || dp) && !o.wide ? 0 : 1; // turning: only to the cell itself; shifting: the 8 around
+        for (let dj = -R; dj <= R; dj++) for (let di = -R; di <= R; di++) {
           if (!dy && !dp && !ci && !cj && !di && !dj) continue;
           const ii = gi + ci + di, jj = gj + cj + dj;
           if (ii < 0 || ii >= GW || jj < 0 || jj >= GH) continue;
@@ -205,14 +242,18 @@ export function solve(dims, scene, opts = {}) {
       const nid = cand[c], npos = cand[c + 1];
       if (isSeen(nid, npos) || isBlocked(nid, npos)) continue;
       const no = ori(nid);
+      if (scene.openStart && scene.start(extent(no, X(nid, npos), Y(nid, npos)))) continue; // back in the open room
       if (no.top > scene.ceiling - m || !free(nid, npos)) { markBlocked(nid, npos); continue; }
       if (!moveClear(id, pos, nid, npos)) continue;
-      push(nid, npos, me);
+      const pn = nid % NP, yn = ((nid - pn) / NP) % NY, dyn = Math.min(Math.abs(yn - y), NY - Math.abs(yn - y));
+      const cost = Math.hypot(X(nid, npos) - X(id, pos), Y(nid, npos) - Y(id, pos)) + reach * (dyn * dYaw + Math.abs(pn - p) * dPitch) + 0.1;
+      push(nid, npos, me, gc[me] + cost);
       if (scene.goal(extent(no, X(nid, npos), Y(nid, npos)))) { found = n - 1; break; }
     }
   }
 
   const result = { found: found >= 0, explored: n, seeds, capped: found < 0 && n >= o.maxStates, path: null };
+  if (o.debug) result.debug = { isSeen, isBlocked, oid, posAt, GW, GH, x0, y0, step, free, moveClear, X, Y, enter, ori };
   if (found >= 0) {
     const path = [];
     for (let i = found; i >= 0; i = par[i]) {
@@ -220,6 +261,10 @@ export function solve(dims, scene, opts = {}) {
       path.push({ x: X(qo[i], qp[i]), y: Y(qo[i], qp[i]), hold: a.h, yaw: a.yaw, pitch: a.pitch });
     }
     result.path = path.reverse();
+    // How to get it from upright into the pose it goes in with, before it goes in (open space, same ceiling).
+    const first = result.path[0], before = [];
+    for (let k = first.hold * NP + Math.round(first.pitch / dPitch); k >= 0; k = fromHP[k]) before.push({ hold: Math.floor(k / NP), pitch: (k % NP) * dPitch });
+    result.before = before.reverse();
   }
   return result;
 }

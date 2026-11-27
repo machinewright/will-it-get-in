@@ -19,7 +19,7 @@ export function corner({ a, b, ceiling, reach }) {
     kind: 'corner', ceiling, blocks,
     bounds: { x0: 0, x1: X, y0: -Y, y1: b },
     snap: { x: 0, y: b }, // the outside walls: the tightest ways round press against them
-    seedY: -Y + reach + 5, // a row deep in the first hallway where any pose that fits the hallway is clear of its end
+    seed: { x: a / 2, y: -Y + reach + 5 }, // deep in the first hallway: any pose that fits the hallway is clear of its end
     inside: (x, y) => (x >= 0 && x <= a && y >= -Y && y <= b) || (y >= 0 && y <= b && x >= 0 && x <= X),
     start: (e) => e.maxy <= 0 && e.minx >= 0 && e.maxx <= a,
     goal: (e) => e.minx >= a && e.miny >= 0 && e.maxy <= b,
@@ -45,14 +45,40 @@ export function sideDoor({ a, b, doorH, t, past, ceiling, reach }) {
     { x0: x2, x1: x2 + R, y0: R, y1: R + T, zb: 0 },
   ];
   return {
-    kind: 'sideDoor', ceiling, blocks,
+    kind: 'sideDoor', ceiling, blocks, door: { width: b, height: doorH, depth: t },
     // Once the centre is more than `reach` into the room the whole box is in, so the grid stops there.
     bounds: { x0: 0, x1: x2 + reach + 10, y0: -Y, y1: Math.max(b + past, b + reach + 10) },
-    seedY: -Y + reach + 5,
+    snap: { x: 0, y: b }, // the hallway's far wall and the door's far jamb
+    seed: { x: a / 2, y: -Y + reach + 5 },
     inside: (x, y) => (x >= 0 && x <= a && y >= -Y && y <= b + past) || (x >= a && x <= x2 && y >= 0 && y <= b)
       || (x >= x2 && x <= x2 + R && y >= -R && y <= R),
     start: (e) => e.maxx <= a && e.miny >= -Y && e.maxy <= b + past,
     goal: (e) => e.minx >= x2,
-    togo: (e) => Math.max(0, x2 - e.minx),
+    // Into the room, and first along the hallway to the door.
+    togo: (e) => Math.max(0, x2 - e.minx) + Math.max(0, -(e.miny + e.maxy) / 2, (e.miny + e.maxy) / 2 - b),
+  };
+}
+
+// A door between two open spaces (room to room, or outside to inside): a wall `t` deep, the opening `b` wide and
+// `doorH` high, plenty of room on both sides. In an open room every pose can be reached from every other (back
+// away, turn it, come back), so all poses entirely in front of the wall count as one start: the search only needs
+// the poses that are partly in the doorway.
+export function roomDoor({ b, doorH, t, ceiling, reach }) {
+  const BIG = b + 2 * reach + 100, r = reach + 10;
+  const blocks = [
+    { x0: 0, x1: t, y0: -BIG, y1: 0, zb: 0 },     // wall on one side of the door
+    { x0: 0, x1: t, y0: b, y1: BIG, zb: 0 },      // ... and the other
+    { x0: 0, x1: t, y0: 0, y1: b, zb: doorH },    // wall above the door
+  ];
+  return {
+    kind: 'roomDoor', ceiling, blocks, openStart: true, door: { width: b, height: doorH, depth: t },
+    // Any pose touching the doorway has its centre within `reach` of the opening.
+    bounds: { x0: -r, x1: t + r, y0: -r, y1: b + r },
+    snap: { x: t, y: b },
+    inside: () => true,
+    start: (e) => e.maxx <= 0,
+    goal: (e) => e.minx >= t,
+    togo: (e) => Math.max(0, t - e.minx) + Math.max(0, -(e.miny + e.maxy) / 2, (e.miny + e.maxy) / 2 - b),
+    opening: { x: 0, y0: 0, y1: b },
   };
 }
