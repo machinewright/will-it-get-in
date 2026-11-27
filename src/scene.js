@@ -21,6 +21,7 @@ export function corner({ a, b, ceiling, reach }) {
     bounds: { x0: 0, x1: X, y0: -Y, y1: b },
     snap: { x: 0, y: b }, // the outside walls: the tightest ways round press against them
     seed: { x: a / 2, y: -Y + reach + 5 }, // deep in the first hallway: any pose that fits the hallway is clear of its end
+    corridor: { x1: a, yEnd: b, opening: { y0: 0, y1: b } }, // the first hallway, open on the right from 0 to b (plan.js)
     inside: (x, y) => (x >= 0 && x <= a && y >= -Y && y <= b) || (y >= 0 && y <= b && x >= 0 && x <= X),
     start: (e) => e.maxy <= 0 && e.minx >= 0 && e.maxx <= a,
     goal: (e) => e.minx >= a && e.miny >= 0 && e.maxy <= b,
@@ -52,6 +53,7 @@ export function sideDoor({ a, b, doorH, t, past, ceiling, reach }) {
     bounds: { x0: 0, x1: x2 + reach + 10, y0: -Y, y1: Math.max(b + past, b + reach + 10) },
     snap: { x: 0, y: b }, // the hallway's far wall and the door's far jamb
     seed: { x: a / 2, y: -Y + reach + 5 },
+    corridor: { x1: a, yEnd: b + past, opening: { y0: 0, y1: b } }, // the hallway, with the door in its side (plan.js)
     inside: (x, y) => (x >= 0 && x <= a && y >= -Y && y <= b + past) || (x >= a && x <= x2 && y >= 0 && y <= b)
       || (x >= x2 && x <= x2 + R && y >= -R && y <= R),
     start: (e) => e.maxx <= a && e.miny >= -Y && e.maxy <= b + past,
@@ -104,6 +106,8 @@ export function stairs({ w, n, rise, going, headroom, hc, b, turn = true, reach 
     // slope x (its move along y) + (its move up or down) <= sqrt(1 + slope^2) d, so the height changes by no more.
     liftFactor: 1 + Math.hypot(1, rise / going),
     seed: { x: w / 2, y: -Y + reach + 5 },
+    // Before the first step and the bulkhead it's just the straight bottom hallway, under its ceiling hc.
+    corridor: { x1: w, yEnd: Math.min(-going, yb, Y0), ceiling: hc },
     viewFrom: -0.3, viewEl: 0.25, viewZ: (H + hc) / 2, viewOrtho: true, // from the side, to see the flight
   };
   const bulk = { x0: 0, x1: w, y0: -Y - T, y1: Math.min(yb, Y0), zb: hc }; // ceiling of the bottom floor, up to the bulkhead

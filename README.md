@@ -18,6 +18,13 @@ one with the same depth and height that would.
   throughout (assuming the box can be brought to its first pose: straight along the hallway, from open space). Open rooms count as a single start (anything can be turned there); the box may only start in
   orientations it can be tipped into under the ceiling from resting on any side, tilting one axis at a time (the
   height then peaks at the diagonal, so this is computed exactly).
+- Straight hallways (`scene.corridor`): in the straight part of the hallway it comes up (walls both sides), whether a
+  pose and a move are clear doesn't depend on how far along it is, so (orientation, sideways position) pairs are
+  searched once, on one row, against the endless hallway. The search proper starts from every pose one move from
+  those that isn't covered by them (touching the door opening, the corner, the hallway's end or the stairs). Same
+  answers as searching the whole hallway (tested on random and fixed scenes; mutants that drop either kind of start
+  are caught), with 5-15x fewer states where it matters: a sofa at a side door went from 1.45M states / 19 s to 88k /
+  5.5 s, and a case that hit the 3M cap now settles. Coming back into a covered pose is skipped.
 - Optional sofa shape (`src/shape.js`): seat block + backrest + two equal arms, as boxes; the item is clear iff every
   part is. Shapes get the flipped holds too (on its back is not on its front) and tilts both ways; the shape must
   be symmetric end to end.

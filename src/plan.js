@@ -9,6 +9,9 @@
 // between neighbouring poses is checked at points so close together that no part of the box travels more than 2d
 // between them. So at every moment in between, every point of the box is within d of a checked position, and the
 // whole movement keeps at least `margin` from walls, door frame and ceiling.
+//
+// A straight hallway on the way in is searched once across rather than at every point along it (see scene.corridor
+// below): same answers, far fewer states.
 
 import { holdsFor, rotation, rotationInto, orient, clear, extent, liftOf, rampAt } from './geom.js';
 
@@ -118,18 +121,18 @@ export function solve(dims, scene, opts = {}) {
   }
   const togo = (id, pos) => scene.togo(extent(ori(id), X(id, pos), Y(id, pos)));
 
-  const free = (id, pos) => clear(scene, ori(id), X(id, pos), Y(id, pos), m);
+  const free = (id, pos, sc = scene) => clear(sc, ori(id), X(id, pos), Y(id, pos), m);
 
   const scratchR = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], scratchO = orient(dims, rotation(HOLDS[0], 0, 0));
 
   // A move from state A to state B (neighbours): check points along it.
-  function moveClear(ida, posa, idb, posb) {
+  function moveClear(ida, posa, idb, posb, sc = scene) {
     const A = angles(ida), B = angles(idb);
     const xa = X(ida, posa), ya = Y(ida, posa), dx = X(idb, posb) - xa, dyy = Y(idb, posb) - ya;
     if (A.h !== B.h) { // same orientation through another hold: only the grid shift can differ
       if (Math.hypot(dx, dyy) < 1e-9) return true;
       const k = Math.ceil(Math.hypot(dx, dyy) * LF / (2 * slack));
-      for (let i = 1; i < k; i++) if (!clear(scene, ori(ida), xa + (i / k) * dx, ya + (i / k) * dyy, m)) return false;
+      for (let i = 1; i < k; i++) if (!clear(sc, ori(ida), xa + (i / k) * dx, ya + (i / k) * dyy, m)) return false;
       return true;
     }
     let dy = B.yaw - A.yaw; if (dy > Math.PI) dy -= 2 * Math.PI; if (dy < -Math.PI) dy += 2 * Math.PI;
@@ -139,12 +142,12 @@ export function solve(dims, scene, opts = {}) {
     const travel = Math.hypot(dx, dyy) + reach * Math.abs(dy) + 2.8 * reach * Math.abs(dp);
     // In open space: if A is clear by more than the furthest any point moves, the whole move is (blocks and ceiling
     // grow by the margin in every direction, which contains a ball of that radius).
-    if (clear(scene, ori(ida), xa, ya, m + travel * LF)) return true;
+    if (clear(sc, ori(ida), xa, ya, m + travel * LF)) return true;
     const k = Math.ceil(travel * LF / (2 * slack));
     for (let i = 1; i < k; i++) {
       const t = i / k;
       const oo = orient(dims, rotationInto(scratchR, HOLDS[A.h], A.yaw + t * dy, A.pitch + t * dp), scratchO);
-      if (!clear(scene, oo, xa + t * dx, ya + t * dyy, m)) return false;
+      if (!clear(sc, oo, xa + t * dx, ya + t * dyy, m)) return false;
     }
     return true;
   }
@@ -240,6 +243,29 @@ export function solve(dims, scene, opts = {}) {
     return { found: true, explored: 0, seeds: 0, capped: false, path, before, straight: true };
   }
 
+  // Straight hallway on the way in (scene.corridor): the hallway x0 .. x1 runs along y from the scene's edge up to
+  // yEnd (a wall, or where the stairs start), with walls on both sides except, if given, an opening at x1 from
+  // opening.y0 to opening.y1, which only adds space (any block beyond x1 there lies inside where the wall would be).
+  // A pose entirely in the hallway, at least m from x1 and from yEnd, is then clear exactly when it is clear on a
+  // reference row deep in the hallway, and so is every move between two such poses that is clear there. Those
+  // poses are "covered" once (orientation, sideways position) is reached on the reference row, whatever the row.
+  // The reference row must be clear of the scene's edge (with a row to spare either side).
+  let cor = scene.corridor && o.corridor !== false && !scene.openStart ? scene.corridor : null;
+  // Checks there are made against the plain hallway alone (its two walls, endless, under its ceiling), so the
+  // reference row can be any row of the grid in the hallway.
+  const dMove = Math.SQRT2 * step + reach * (dYaw + 2.8 * dPitch) + 1; // more than any point moves in one move
+  const jRef = cor ? Math.round((scene.seed.y - y0) / step) : 0;
+  if (cor && (jRef < 1 || jRef + 1 >= GH)) cor = null;
+  const csc = cor && { blocks: [{ x0: x0 - 100, x1: x0, y0: -1e7, y1: 1e7, zb: 0 }, { x0: cor.x1, x1: cor.x1 + 100, y0: -1e7, y1: 1e7, zb: 0 }], ceiling: cor.ceiling ?? scene.ceiling };
+  const CW = cor ? Math.min(GW, Math.floor((cor.x1 - x0) / step) + 2) : 0;
+  let cpar = null, cdj = null, corN = 0, corCapped = false;
+  const seedKey = new Map(); // seed state -> the straight-hallway pair it came from
+  const inStraight = (no, nid, npos) => {
+    if (!cor || Y(nid, npos) + no.maxy > cor.yEnd - m || X(nid, npos) + no.maxx > cor.x1 - m) return false;
+    const ni = pg[npos] % GW;
+    return ni < CW && cpar[nid * CW + ni] !== -2;
+  };
+
   if (scene.openStart) {
     // Open start: seeds are the poses just entering the doorway (the part past the wall's face must be within the
     // opening), every orientation it can enter in. Poses entirely in front of the wall are never expanded.
@@ -263,6 +289,63 @@ export function solve(dims, scene, opts = {}) {
         }
       }
     }
+  } else if (cor) {
+    // A straight hallway on the way in (see `scene.corridor`): there, which (orientation, sideways position) pairs
+    // can be reached doesn't depend on how far along it the item is, so they are found once, on a single row deep
+    // in it (a move to the row before or after is checked there, and is the same anywhere along it). Then the
+    // search proper starts from each of those, slid straight up until it first reaches past the straight part
+    // (each such move checked as usual). Same answers as searching the whole hallway, without repeating the same
+    // turns at every point along it.
+    cpar = new Int32Array(NO * CW).fill(-2); cdj = new Int8Array(NO * CW);
+    const cq = [];
+    for (let id = 0; id < NO; id++) {
+      if (!enter(id)) continue;
+      const oo = ori(id), iSeed = Math.round((scene.seed.x - (oo.minx + oo.maxx) / 2 - oo.offx - x0) / step);
+      for (let i = Math.max(0, iSeed - 1); i <= Math.min(CW - 1, iSeed + 1); i++) {
+        const pos = posAt[i + jRef * GW], key = id * CW + i;
+        if (pos < 0 || cpar[key] !== -2) continue;
+        if (scene.start(extent(oo, X(id, pos), Y(id, pos))) && free(id, pos, csc)) { cpar[key] = -1; cq.push(key); }
+      }
+    }
+    for (let qi = 0; qi < cq.length && cq.length < o.maxStates; qi++) {
+      const key = cq[qi], id = Math.floor(key / CW), pos = posAt[key - id * CW + jRef * GW];
+      const cand = neighbours(id, pos);
+      for (let c = 0; c < cand.length; c += 2) {
+        const nid = cand[c], npos = cand[c + 1], g = pg[npos], ni = g % GW, nkey = nid * CW + ni;
+        if (ni >= CW || cpar[nkey] !== -2 || isBlocked(nid, npos)) continue;
+        if (!free(nid, npos, csc)) { markBlocked(nid, npos); continue; } // (blocked there => blocked in the scene)
+        if (!moveClear(id, pos, nid, npos, csc)) continue;
+        cpar[nkey] = key; cdj[nkey] = (g - ni) / GW - jRef; cq.push(nkey);
+      }
+    }
+    corN = cq.length; corCapped = corN >= o.maxStates;
+    // Where the hallway stops being plain: its end (a wall, or the stairs) and the opening in its side. The search
+    // proper starts from every pose one move away from a covered pose that isn't itself covered: across the end
+    // line, into the opening, or turned in a way that only the opening leaves room for.
+    const d = dMove;
+    const op = cor.opening;
+    for (const key of cq) {
+      if (n + corN >= o.maxStates) { corCapped = true; break; }
+      const id = Math.floor(key / CW), i = key - id * CW, oo = ori(id), xr = x0 + i * step + oo.offx + oo.maxx;
+      const jOf = (yy) => (yy - oo.offy - y0) / step; // row at which the centre is at yy
+      const jTop = Math.floor(jOf(cor.yEnd - m - oo.maxy)); // the last row it is covered at
+      const rows = [[Math.max(0, Math.ceil(jOf(cor.yEnd - m - d - oo.maxy))), jTop]];
+      if (op && xr + d > cor.x1 - m) rows.push([Math.max(0, Math.ceil(jOf(op.y0 - m - d - oo.maxy))), Math.min(jTop, Math.floor(jOf(op.y1 + m + d - oo.miny)))]);
+      for (const [ja, jb] of rows) for (let j = ja; j <= jb && j < GH; j++) {
+        const pos = posAt[i + j * GW];
+        if (pos < 0) continue;
+        const cand = neighbours(id, pos);
+        for (let c = 0; c < cand.length; c += 2) {
+          const nid = cand[c], npos = cand[c + 1];
+          if (isSeen(nid, npos) || isBlocked(nid, npos)) continue;
+          const no = ori(nid);
+          if (inStraight(no, nid, npos)) continue;
+          if (no.top > scene.ceiling - m || !free(nid, npos)) { markBlocked(nid, npos); continue; }
+          if (!moveClear(id, pos, nid, npos)) continue;
+          push(nid, npos, -1, tipCost(id)); seedKey.set(n - 1, { key, j });
+        }
+      }
+    }
   } else {
   // Seeds: every clear pose in an orientation it can enter in, on the centre line deep in the hallway it comes from
   // (a pose that fits a straight hallway anywhere fits it centred; a cell either side allows for the grid).
@@ -281,12 +364,10 @@ export function solve(dims, scene, opts = {}) {
   }
   const seeds = n;
 
-  let found = -1;
-  while (hn > 0 && found < 0 && n < o.maxStates) {
-    const me = hpop(), id = qo[me], pos = qp[me];
+  // Neighbours: shift by up to one step in x and y, turn by up to one step and tilt by up to one step, together
+  // (the tightest ways round need sliding while turning), plus changes of hold. Returns (orientation, position) pairs.
+  function neighbours(id, pos) {
     const p = id % NP, y = ((id - p) / NP) % NY, h = Math.floor(id / (NP * NY));
-    // Neighbours: shift by up to one step in x and y, turn by up to one step and tilt by up to one step, together
-    // (the tightest ways round need sliding while turning), plus changes of hold.
     const cand = [];
     const g = pg[pos], gi = g % GW, gj = (g - gi) / GW;
     const me0 = ori(id);
@@ -308,11 +389,20 @@ export function solve(dims, scene, opts = {}) {
       }
     }
     for (const j of same.get(id) ?? []) cand.push(j, pos);
+    return cand;
+  }
+
+  let found = -1;
+  while (hn > 0 && found < 0 && n + corN < o.maxStates) {
+    const me = hpop(), id = qo[me], pos = qp[me];
+    const p = id % NP, y = ((id - p) / NP) % NY;
+    const cand = neighbours(id, pos);
     for (let c = 0; c < cand.length; c += 2) {
       const nid = cand[c], npos = cand[c + 1];
       if (isSeen(nid, npos) || isBlocked(nid, npos)) continue;
       const no = ori(nid);
       if (scene.openStart && scene.start(extent(no, X(nid, npos), Y(nid, npos)))) continue; // back in the open room
+      if (inStraight(no, nid, npos)) continue; // back in the straight hallway, in a way already covered from there
       if (no.top > scene.ceiling - m || !free(nid, npos)) { markBlocked(nid, npos); continue; }
       if (!moveClear(id, pos, nid, npos)) continue;
       const pn = nid % NP, yn = ((nid - pn) / NP) % NY, dyn = Math.min(Math.abs(yn - y), NY - Math.abs(yn - y));
@@ -326,7 +416,7 @@ export function solve(dims, scene, opts = {}) {
     }
   }
 
-  const result = { found: found >= 0, explored: n, seeds, capped: found < 0 && n >= o.maxStates, path: null };
+  const result = { found: found >= 0, explored: n + corN, seeds, capped: found < 0 && (corCapped || n + corN >= o.maxStates), path: null };
   if (o.debug) result.debug = { isSeen, isBlocked, oid, posAt, GW, GH, x0, y0, step, free, moveClear, X, Y, enter, ori };
   if (found >= 0) {
     const path = [];
@@ -338,6 +428,27 @@ export function solve(dims, scene, opts = {}) {
     if (scene.openStart) { // begin from the checked approach: entirely in front of the wall
       const i0 = (() => { let i = found; while (par[i] >= 0) i = par[i]; return i; })();
       result.path.unshift({ ...result.path[0], x: result.path[0].x - backOff(qo[i0], qp[i0]) });
+    }
+    const i0 = (() => { let i = found; while (par[i] >= 0) i = par[i]; return i; })();
+    if (seedKey.has(i0)) { // the way along the straight hallway to where the search proper started
+      const { key, j } = seedKey.get(i0), chain = [];
+      for (let k = key, r = 0; k >= 0; r -= cdj[k], k = cpar[k]) chain.push({ id: Math.floor(k / CW), i: k % CW, r });
+      // Place that way so that every pose on it is covered (as far along as allowed, but not past row j), then slide
+      // the last pose straight along the hallway to row j (clear: it's covered all the way).
+      let jA = j, ok = true;
+      for (const c of chain) { const oo = ori(c.id); jA = Math.min(jA, Math.floor((cor.yEnd - m - oo.maxy - oo.offy - y0) / step) - c.r); }
+      { // and with the first pose where the scene says it starts from (e.g. before the corner)
+        const c = chain[chain.length - 1], oo = ori(c.id), xc = x0 + c.i * step + oo.offx;
+        for (let t = 0; t < GH && !scene.start(extent(oo, xc, y0 + (jA + c.r) * step + oo.offy)); t++) jA--;
+      }
+      const pose = (id, i, jj) => { const a = angles(id), oo = ori(id), x = x0 + i * step + oo.offx, y = y0 + jj * step + oo.offy;
+        if (y + oo.miny < scene.bounds.y0 + m) ok = false; // (would run into the scene's edge: then search the plain way)
+        return { x, y, hold: a.h, yaw: a.yaw, pitch: a.pitch, z: scene.ramp ? liftOf(scene.ramp, oo, y) : 0 }; };
+      const lead = chain.reverse().map((c) => pose(c.id, c.i, jA + c.r));
+      const last = chain[chain.length - 1];
+      if (jA < j) lead.push(pose(last.id, last.i, j));
+      if (!ok) return solve(dims, scene, { ...opts, corridor: false });
+      result.path = lead.concat(result.path);
     }
     // How to get it from upright into the pose it goes in with, before it goes in (open space, same ceiling).
     const first = result.path[0], before = [];

@@ -335,3 +335,35 @@ test('stairs: hand cases and random flights pass the independent check (real ste
   }
   assert.ok(found >= 6, `only ${found} of 16 stair cases had a way`);
 });
+
+test('the straight-hallway shortcut gives the same answers as searching the whole hallway', () => {
+  let seed = 23; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const coarse = { step: 5, yawSteps: 72, pitchSteps: 18 };
+  let yes = 0, no = 0;
+  // Fixed cases first: through a side door with the hallway going on past it (a mutant that never starts the
+  // search from poses beside the door, only from the hallway's end, said "No" to the first one).
+  const fixed = [
+    [[200, 70, 80], (reach) => sideDoor({ a: 100, b: 80, doorH: 200, t: 12, past: 100, ceiling: 240, reach })],
+    [[210, 72, 75], (reach) => sideDoor({ a: 90, b: 78, doorH: 200, t: 12, past: 150, ceiling: 240, reach })],
+    [[230, 70, 60], (reach) => corner({ a: 85, b: 100, ceiling: 240, reach })],
+  ];
+  for (const [dims, mk] of fixed) {
+    const scene = mk(reachOf(dims)), a = solve(dims, scene, { ...coarse, maxStates: 3e6 }), b = solve(dims, scene, { ...coarse, maxStates: 3e6, corridor: false });
+    assert.equal(a.found, b.found, `fixed ${dims} in ${scene.kind}: shortcut ${a.found}, whole hallway ${b.found}`);
+    if (a.found) assert.equal(verifyPath(a, dims, scene), null, `fixed ${dims} in ${scene.kind}`);
+  }
+  for (let i = 0; i < 30; i++) {
+    const L = 140 + Math.round(rnd() * 100), D = 55 + Math.round(rnd() * 40), H = 45 + Math.round(rnd() * 45);
+    const dims = i % 5 === 4 ? sofa({ L, D: Math.max(D, 75), H: Math.max(H, 70), seatH: 42, backT: 18, armH: 60, armW: 14 }) : [L, D, H];
+    const ceiling = 200 + Math.round(rnd() * 60), k = i % 3;
+    const mk = k === 0 ? (reach) => corner({ a: 70 + Math.round(rnd() * 45), b: 70 + Math.round(rnd() * 45), ceiling, reach })
+      : k === 1 ? (reach) => sideDoor({ a: 75 + Math.round(rnd() * 50), b: 70 + Math.round(rnd() * 25), doorH: 190 + Math.round(rnd() * 20), t: 8 + Math.round(rnd() * 20), past: Math.round(rnd() * 120), ceiling, reach })
+      : (reach) => stairs({ w: 75 + Math.round(rnd() * 30), n: 10 + Math.round(rnd() * 5), rise: 16 + Math.round(rnd() * 5), going: 22 + Math.round(rnd() * 8), headroom: 185 + Math.round(rnd() * 30), hc: 225 + Math.round(rnd() * 30), b: rnd() < 0.5 ? 0 : 80 + Math.round(rnd() * 30), turn: rnd() < 0.5, reach });
+    const scene = mk(reachOf(dims));
+    const a = solve(dims, scene, { ...coarse, maxStates: 3e6 }), b = solve(dims, scene, { ...coarse, maxStates: 3e6, corridor: false });
+    if (a.capped || b.capped) continue;
+    assert.equal(a.found, b.found, `case ${i}: ${dims.parts ? 'sofa' : dims} in ${scene.kind}: shortcut ${a.found}, whole hallway ${b.found}`);
+    if (a.found) { yes++; assert.equal(verifyPath(a, dims, scene), null, `case ${i}: ${dims.parts ? 'sofa' : dims} in ${scene.kind}`); } else no++;
+  }
+  assert.ok(yes >= 6 && no >= 6, `need a mix of answers: ${yes} yes, ${no} no`);
+});
